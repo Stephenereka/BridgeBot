@@ -7,6 +7,16 @@ from core.webhook_manager import WebhookManager
 import asyncio
 
 
+DEFAULT_PREFIX = '!bb '
+
+
+def _get_prefix(bot, message):
+    prefix = DEFAULT_PREFIX
+    if message.guild:
+        prefix = bot.guild_prefixes.get(message.guild.id, DEFAULT_PREFIX)
+    return commands.when_mentioned_or(prefix)(bot, message)
+
+
 class BridgeBot(commands.Bot):
     def __init__(self):
         intents = discord.Intents.default()
@@ -15,18 +25,21 @@ class BridgeBot(commands.Bot):
         intents.guilds = True
 
         super().__init__(
-            command_prefix='!bb ',
+            command_prefix=_get_prefix,
             intents=intents,
             application_id=Config.APPLICATION_ID,
             help_command=None,
         )
 
+        self.guild_prefixes = {}
         self.db = Database()
         self.relay = RelayEngine(self)
         self.webhook_manager = WebhookManager(self)
 
     async def setup_hook(self):
         await self.db.init()
+        for row in await self.db.get_all_server_prefixes():
+            self.guild_prefixes[row['id']] = row['prefix']
 
         cogs = [
             'cogs.bridge',

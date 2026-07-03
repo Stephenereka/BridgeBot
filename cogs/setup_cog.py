@@ -221,6 +221,20 @@ class SetupCog(commands.Cog, name="Setup"):
             'channel': channel.name,
         })
 
+    @app_commands.command(name="setprefix", description="Change BridgeBot's legacy text-command prefix for this server (bot owner only)")
+    @app_commands.describe(prefix="New prefix, e.g. !bb or ? (default is \"!bb \")")
+    async def setprefix(self, interaction: discord.Interaction, prefix: str):
+        if not await self.bot.is_owner(interaction.user):
+            await interaction.response.send_message("Bot owner only.", ephemeral=True)
+            return
+        if len(prefix) > 10:
+            await interaction.response.send_message("Prefix must be 10 characters or fewer.", ephemeral=True)
+            return
+        await self.bot.db.upsert_server(interaction.guild)
+        await self.bot.db.update_server_config(interaction.guild_id, 'prefix', prefix)
+        self.bot.guild_prefixes[interaction.guild_id] = prefix
+        await interaction.response.send_message(f"Prefix updated to `{prefix}` for this server.", ephemeral=True)
+
     @app_commands.command(name="export", description="Export this server's BridgeBot config as JSON")
     @require_perm(PermLevel.ADMIN)
     async def export(self, interaction: discord.Interaction):

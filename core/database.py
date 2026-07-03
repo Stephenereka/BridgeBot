@@ -158,6 +158,11 @@ class Database:
             await self._conn.commit()
         except Exception:
             pass
+        try:
+            await self._conn.execute("ALTER TABLE servers ADD COLUMN prefix TEXT")
+            await self._conn.commit()
+        except Exception:
+            pass
 
     # ── Servers ────────────────────────────────────────────────────────────────
 
@@ -173,11 +178,15 @@ class Database:
             return await cur.fetchone()
 
     async def update_server_config(self, server_id, key, value):
-        allowed = {'admin_role_id', 'admin_channel_id', 'audit_channel_id', 'alert_channel_id'}
+        allowed = {'admin_role_id', 'admin_channel_id', 'audit_channel_id', 'alert_channel_id', 'prefix'}
         if key not in allowed:
             raise ValueError(f"Invalid config key: {key}")
         await self._conn.execute(f"UPDATE servers SET {key} = ? WHERE id = ?", (value, server_id))
         await self._conn.commit()
+
+    async def get_all_server_prefixes(self):
+        async with self._conn.execute("SELECT id, prefix FROM servers WHERE prefix IS NOT NULL") as cur:
+            return await cur.fetchall()
 
     async def mark_server_kicked(self, server_id):
         await self._conn.execute("UPDATE servers SET bot_kicked = 1 WHERE id = ?", (server_id,))
