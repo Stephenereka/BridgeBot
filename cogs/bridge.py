@@ -56,6 +56,19 @@ class BridgeConsentView(discord.ui.View):
         await self.bot.db.update_bridge_webhooks(full_id, webhook_a_url, webhook_b_url)
         self.pending.pop(self.bridge_id, None)
 
+        audit_details = {
+            'bridge_id': full_id[:8],
+            'server_a': guild_a.name if guild_a else str(data['server_a_id']),
+            'channel_a': f'#{channel_a.name}' if channel_a else str(data['channel_a_id']),
+            'server_b': guild_b.name,
+            'channel_b': f'#{channel_b.name}' if channel_b else str(data['channel_b_id']),
+            'accepted_by': str(interaction.user),
+        }
+        # Log to both servers' audit channels
+        await send_audit_log(self.bot, guild_b.id, interaction.user, 'bridge_accepted', audit_details)
+        if guild_a:
+            await send_audit_log(self.bot, guild_a.id, interaction.user, 'bridge_accepted', audit_details)
+
         embed = discord.Embed(
             title="🌉 Bridge Active!",
             description=(
@@ -92,6 +105,19 @@ class BridgeConsentView(discord.ui.View):
         await interaction.response.send_message("Bridge request declined.")
 
         if data:
+            guild_a = self.bot.get_guild(data['server_a_id'])
+            audit_details = {
+                'request_id': self.bridge_id,
+                'server_a': guild_a.name if guild_a else str(data['server_a_id']),
+                'channel_a': str(data['channel_a_id']),
+                'channel_b': str(data['channel_b_id']),
+                'declined_by': str(interaction.user),
+            }
+            # Log to both servers' audit channels
+            await send_audit_log(self.bot, interaction.guild_id, interaction.user, 'bridge_declined', audit_details)
+            if guild_a:
+                await send_audit_log(self.bot, guild_a.id, interaction.user, 'bridge_declined', audit_details)
+
             channel_a = self.bot.get_channel(data['channel_a_id'])
             if channel_a:
                 guild_b = self.bot.get_guild(data['server_b_id'])
