@@ -207,5 +207,68 @@ class SetupCog(commands.Cog, name="Setup"):
         await interaction.followup.send(f"✅ Role mapping `{mapping_id}` toggled.", ephemeral=True)
 
 
+    @app_commands.command(name="bridgealert", description="Set the channel where bridge error alerts are posted")
+    @app_commands.describe(channel="Channel to send bridge alerts to")
+    @require_perm(PermLevel.ADMIN)
+    async def bridgealert(self, interaction: discord.Interaction, channel: discord.TextChannel):
+        await interaction.response.defer(ephemeral=True)
+        await self.bot.db.upsert_server(interaction.guild)
+        await self.bot.db.update_server_config(interaction.guild_id, 'alert_channel_id', channel.id)
+        await interaction.followup.send(
+            f"✅ Bridge alerts will now be sent to {channel.mention}.", ephemeral=True
+        )
+        await send_audit_log(self.bot, interaction.guild_id, interaction.user, 'alert_channel_set', {
+            'channel': channel.name,
+        })
+
+    @app_commands.command(name="export", description="Export this server's BridgeBot config as JSON")
+    @require_perm(PermLevel.ADMIN)
+    async def export(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True)
+        import json, io
+        data = await self.bot.db.get_server_config_export(interaction.guild_id)
+        # Remove sensitive webhook URLs
+        for b in data.get('bridges', []):
+            b.pop('webhook_a_url', None)
+            b.pop('webhook_b_url', None)
+        json_str = json.dumps(data, indent=2, default=str)
+        file = discord.File(fp=io.BytesIO(json_str.encode()), filename=f"bridgebot_config_{interaction.guild_id}.json")
+        await interaction.followup.send("Here is your server config export:", file=file, ephemeral=True)
+
+    webhook_group = app_commands.Group(name="webhook", description="Webhook management")
+
+    @webhook_group.command(name="rotate", description="Regenerate webhook URLs for a bridge (security refresh)")
+    @app_commands.describe(bridge_id="Bridge ID from /bridge list")
+    @require_perm(PermLevel.ADMIN)
+    async def webhook_rotate(self, interaction: discord.Interaction, bridge_id: str):
+        await interaction.response.defer(ephemeral=True)
+        bridge = await self.bot.db.get_bridge(bridge_id)
+        if not bridge:
+            await interaction.followup.send("❌ Bridge not found.", ephemeral=True)
+            return
+
+        results = []
+        for side, ch_id, old_url_key in [
+            ('A', bridge['channel_a_id'], 'webhook_a_url'),
+            ('B', bridge['channel_b_id'], 'webhook_b_url'),
+        ]:
+            ch = self.bot.get_channel(ch_id)
+            if not ch:
+                results.append(f"Side {side}: channel not accessible")
+                continue
+            if bridge[old_url_key]:
+                await self.bot.webhook_manager.delete_webhook_by_url(bridge[old_url_key])
+            new_url = await self.bot.webhook_manager.create_webhook(ch)
+            if new_url:
+                kwargs = {f'webhook_{side.lower()}_url': new_url}
+                await self.bot.db.update_bridge_webhooks(bridge_id, **kwargs)
+                results.append(f"Side {side} ({ch.name}): ✅ rotated")
+            else:
+                results.append(f"Side {side} ({ch.name}): ❌ failed (check Manage Webhooks permission)")
+
+        await interaction.followup.send("\n".join(results), ephemeral=True)
+        await send_audit_log(self.bot, interaction.guild_id, interaction.user, 'webhook_rotated', {'bridge_id': bridge_id})
+
+
 async def setup(bot):
     await bot.add_cog(SetupCog(bot))

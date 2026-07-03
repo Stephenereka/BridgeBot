@@ -273,5 +273,34 @@ class FederationCog(commands.Cog, name="Federation"):
         })
 
 
+    @fed.command(name="transfer", description="Transfer federation ownership to another server (owner only)")
+    @app_commands.describe(federation_id="Federation ID", server_id="Server ID of the new owner")
+    @require_perm(PermLevel.OWNER)
+    async def fed_transfer(self, interaction: discord.Interaction, federation_id: str, server_id: str):
+        await interaction.response.defer(ephemeral=True)
+        try:
+            t_sv = int(server_id)
+        except ValueError:
+            await interaction.followup.send("❌ Invalid server ID.", ephemeral=True)
+            return
+        fed = await self.bot.db.get_federation(federation_id)
+        if not fed or fed['owner_server_id'] != interaction.guild_id:
+            await interaction.followup.send("❌ Federation not found or you don't own it.", ephemeral=True)
+            return
+        members = await self.bot.db.get_federation_members(federation_id)
+        if not any(m['server_id'] == t_sv for m in members):
+            await interaction.followup.send("❌ That server is not a member of this federation.", ephemeral=True)
+            return
+        await self.bot.db.transfer_federation(federation_id, t_sv)
+        new_guild = self.bot.get_guild(t_sv)
+        await interaction.followup.send(
+            f"✅ **{fed['name']}** ownership transferred to **{new_guild.name if new_guild else server_id}**.",
+            ephemeral=True,
+        )
+        await send_audit_log(self.bot, interaction.guild_id, interaction.user, 'federation_transferred', {
+            'federation_id': federation_id, 'new_owner': server_id,
+        })
+
+
 async def setup(bot):
     await bot.add_cog(FederationCog(bot))

@@ -93,3 +93,15 @@ class WebhookManager:
                 return True
             except Exception:
                 return False
+
+    async def verify_webhook(self, webhook_url: str) -> bool:
+        """Returns True if the webhook is still alive, False if deleted/broken."""
+        async with aiohttp.ClientSession() as session:
+            try:
+                wh = discord.Webhook.from_url(webhook_url, session=session)
+                await wh.fetch()
+                return True
+            except discord.NotFound:
+                return False
+            except Exception:
+                return True  # Assume alive on other errors (network, rate limit)

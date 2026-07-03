@@ -373,5 +373,48 @@ class BridgeCog(commands.Cog, name="Bridge"):
         await interaction.followup.send(embed=embed, ephemeral=True)
 
 
+    @bridge.command(name="repair", description="Recreate broken webhooks for a bridge")
+    @app_commands.describe(bridge_id="Bridge ID from /bridge list")
+    @require_perm(PermLevel.ADMIN)
+    async def bridge_repair(self, interaction: discord.Interaction, bridge_id: str):
+        await interaction.response.defer(ephemeral=True)
+        bridge = await self.bot.db.get_bridge(bridge_id)
+        if not bridge:
+            await interaction.followup.send("❌ Bridge not found.", ephemeral=True)
+            return
+
+        repaired = []
+        failed = []
+
+        for side, ch_id, url_field in [
+            ('A', bridge['channel_a_id'], 'webhook_a_url'),
+            ('B', bridge['channel_b_id'], 'webhook_b_url'),
+        ]:
+            ch = self.bot.get_channel(ch_id)
+            if not ch:
+                failed.append(f"Side {side}: channel not found")
+                continue
+            ok = await self.bot.webhook_manager.verify_webhook(bridge[url_field] or '')
+            if not ok or not bridge[url_field]:
+                new_url = await self.bot.webhook_manager.create_webhook(ch)
+                if new_url:
+                    kwargs = {f'webhook_{side.lower()}_url': new_url}
+                    await self.bot.db.update_bridge_webhooks(bridge_id, **kwargs)
+                    repaired.append(f"Side {side} ({ch.name})")
+                else:
+                    failed.append(f"Side {side}: missing Manage Webhooks permission in #{ch.name}")
+            else:
+                repaired.append(f"Side {side} ({ch.name}) — already healthy")
+
+        lines = []
+        if repaired:
+            lines.append("✅ **Repaired:**\n" + "\n".join(f"  • {r}" for r in repaired))
+        if failed:
+            lines.append("❌ **Failed:**\n" + "\n".join(f"  • {f}" for f in failed))
+
+        await interaction.followup.send("\n".join(lines) or "Nothing to repair.", ephemeral=True)
+        await send_audit_log(self.bot, interaction.guild_id, interaction.user, 'bridge_repaired', {'bridge_id': bridge_id})
+
+
 async def setup(bot):
     await bot.add_cog(BridgeCog(bot))
