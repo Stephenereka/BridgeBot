@@ -407,6 +407,12 @@ class HelpView(discord.ui.View):
         super().__init__(timeout=300)
         self.page = page
         self.add_item(HelpSelect(self))
+        self.add_item(discord.ui.Button(
+            label="💬 Support Server",
+            style=discord.ButtonStyle.link,
+            url=SUPPORT_SERVER,
+            row=1,
+        ))
         self._update_buttons()
 
     def _update_buttons(self):
@@ -419,25 +425,21 @@ class HelpView(discord.ui.View):
         e.set_footer(text=f"BridgeBot • {HELP_CATEGORY_LABELS[self.page]} • Use /tutorial for the full setup guide")
         return e
 
-    @discord.ui.button(label="← Prev", style=discord.ButtonStyle.secondary, row=1)
+    @discord.ui.button(label="← Prev", style=discord.ButtonStyle.secondary, row=2)
     async def prev_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         self.page -= 1
         self._update_buttons()
         await interaction.response.edit_message(embed=self._embed(), view=self)
 
-    @discord.ui.button(label="1 / 7", style=discord.ButtonStyle.primary, disabled=True, row=1)
+    @discord.ui.button(label="1 / 7", style=discord.ButtonStyle.primary, disabled=True, row=2)
     async def page_label(self, interaction: discord.Interaction, button: discord.ui.Button):
         pass
 
-    @discord.ui.button(label="Next →", style=discord.ButtonStyle.secondary, row=1)
+    @discord.ui.button(label="Next →", style=discord.ButtonStyle.secondary, row=2)
     async def next_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         self.page += 1
         self._update_buttons()
         await interaction.response.edit_message(embed=self._embed(), view=self)
-
-    @discord.ui.button(label="💬 Support Server", style=discord.ButtonStyle.link, url=SUPPORT_SERVER, row=1)
-    async def support_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        pass
 
 
 class InfoCog(commands.Cog, name="Info"):
