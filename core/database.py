@@ -360,6 +360,11 @@ class Database:
             await self._conn.commit()
         except Exception:
             pass
+        try:
+            await self._conn.execute("ALTER TABLE ban_relay_config ADD COLUMN manual_only INTEGER DEFAULT 0")
+            await self._conn.commit()
+        except Exception:
+            pass
 
     # ── Servers ────────────────────────────────────────────────────────────────
 
@@ -634,12 +639,13 @@ class Database:
 
     # ── Ban Relay ──────────────────────────────────────────────────────────────
 
-    async def set_ban_relay(self, federation_id, server_id, enabled, auto_ban=False):
+    async def set_ban_relay(self, federation_id, server_id, enabled, auto_ban=False, manual_only=False):
         await self._conn.execute("""
-            INSERT INTO ban_relay_config (id, federation_id, server_id, enabled, auto_ban)
-            VALUES (?, ?, ?, ?, ?)
-            ON CONFLICT(federation_id, server_id) DO UPDATE SET enabled=excluded.enabled, auto_ban=excluded.auto_ban
-        """, (str(uuid.uuid4()), federation_id, server_id, 1 if enabled else 0, 1 if auto_ban else 0))
+            INSERT INTO ban_relay_config (id, federation_id, server_id, enabled, auto_ban, manual_only)
+            VALUES (?, ?, ?, ?, ?, ?)
+            ON CONFLICT(federation_id, server_id) DO UPDATE SET
+                enabled=excluded.enabled, auto_ban=excluded.auto_ban, manual_only=excluded.manual_only
+        """, (str(uuid.uuid4()), federation_id, server_id, 1 if enabled else 0, 1 if auto_ban else 0, 1 if manual_only else 0))
         await self._conn.commit()
 
     async def get_ban_relay_config(self, federation_id, server_id):
