@@ -3,6 +3,221 @@ from discord import app_commands
 from discord.ext import commands
 import time
 
+TUTORIAL_PAGES = [
+    discord.Embed(
+        title="🌉 BridgeBot Tutorial — Page 1 of 8: What is BridgeBot?",
+        description=(
+            "**BridgeBot connects Discord servers by linking channels together.**\n\n"
+            "When a message is sent in a bridged channel, it is automatically relayed to the partner "
+            "channel in another server — appearing with the sender's name and avatar via webhook.\n\n"
+            "**What you can do with BridgeBot:**\n"
+            "• 🌉 **Bridges** — Link a channel in your server to a channel in another server\n"
+            "• 🏛️ **Federations** — Group multiple servers together under one alliance\n"
+            "• 📊 **Polls** — Run votes that span all servers in a federation\n"
+            "• 📢 **Hub Broadcasts** — Send announcements to all federation members at once\n"
+            "• 🏆 **Leaderboards** — See which servers are the most active globally\n\n"
+            "**Who this tutorial is for:**\n"
+            "This tutorial walks through setup and usage from the perspective of a server admin. "
+            "Regular members only need to know they can type in bridged channels normally — "
+            "BridgeBot handles everything else automatically."
+        ),
+        color=0x5865F2,
+    ),
+    discord.Embed(
+        title="🌉 BridgeBot Tutorial — Page 2 of 8: First-Time Setup",
+        description=(
+            "**Run `/setup` first** — it shows you the recommended configuration steps.\n\n"
+            "**Recommended channels to create in your server:**\n"
+            "• `#bridge-admin` — Only admins can use this; run all BridgeBot commands here\n"
+            "• `#bridge-logs` — BridgeBot posts audit logs here (who created/deleted what)\n\n"
+            "**Connect those channels to BridgeBot:**\n"
+            "```\n"
+            "/config set  →  Admin Channel (restricts commands to #bridge-admin)\n"
+            "/config set  →  Audit Log Channel (logs all admin actions)\n"
+            "```\n"
+            "**Optional — create a BridgeBot Admin role:**\n"
+            "If you want non-owner staff to be able to manage bridges, create a role "
+            "and set it with:\n"
+            "```\n/config set  →  BridgeBot Admin Role ID\n```\n"
+            "**Check your config anytime:**\n"
+            "```\n/config view\n```\n"
+            "⚠️ BridgeBot needs **Manage Webhooks** permission in every channel you want to bridge."
+        ),
+        color=0x5865F2,
+    ),
+    discord.Embed(
+        title="🌉 BridgeBot Tutorial — Page 3 of 8: Creating Your First Bridge",
+        description=(
+            "A bridge connects **one channel in your server** to **one channel in another server**. "
+            "Both sides must have an admin approve it.\n\n"
+            "**Step 1 — Get the target server's info:**\n"
+            "Ask an admin of the other server for their:\n"
+            "• Server ID (right-click server icon → Copy Server ID)\n"
+            "• Channel ID (right-click the channel → Copy Channel ID)\n\n"
+            "**Step 2 — Send the bridge request from your server:**\n"
+            "```\n/bridge create\n  target_server_id: 123456789\n  target_channel_id: 987654321\n```\n"
+            "This sends a notification to the other server with **Accept / Decline** buttons.\n\n"
+            "**Step 3 — The other server accepts:**\n"
+            "An admin there clicks **✅ Accept Bridge** and webhooks are created on both sides. "
+            "The bridge goes live instantly.\n\n"
+            "**Step 4 — Test it:**\n"
+            "Send a message in your bridged channel. It should appear in theirs within a second.\n\n"
+            "💡 Either server can delete the bridge at any time with `/bridge delete`."
+        ),
+        color=0x5865F2,
+    ),
+    discord.Embed(
+        title="🌉 BridgeBot Tutorial — Page 4 of 8: Managing Bridges",
+        description=(
+            "**View all your bridges:**\n"
+            "```\n/bridge list\n```\n"
+            "Each bridge has a short ID (e.g. `a1b2c3d4`). Use this ID in all bridge commands.\n\n"
+            "**Pause / resume a bridge** (keeps the bridge alive but stops relaying):\n"
+            "```\n/bridge pause  bridge_id: a1b2c3d4\n/bridge resume bridge_id: a1b2c3d4\n```\n"
+            "**Delete a bridge permanently:**\n"
+            "```\n/bridge delete bridge_id: a1b2c3d4\n```\n"
+            "**Check bridge health:**\n"
+            "```\n/status\n```\n"
+            "If a webhook is broken (deleted from Discord), fix it with:\n"
+            "```\n/bridge repair bridge_id: a1b2c3d4\n```\n"
+            "**View message stats:**\n"
+            "```\n/bridge analytics bridge_id: a1b2c3d4\n```\n"
+            "Shows messages relayed in the last 7 days, 30 days, and all-time.\n\n"
+            "**Toggle what gets relayed** (edits, deletes, attachments, embeds):\n"
+            "```\n/bridge toggle bridge_id: a1b2c3d4  setting: relay_edits\n```"
+        ),
+        color=0x5865F2,
+    ),
+    discord.Embed(
+        title="🌉 BridgeBot Tutorial — Page 5 of 8: Bridge Customization",
+        description=(
+            "**Control how messages appear in the other server:**\n\n"
+            "`/bridge setname` — Override the display name for all relayed messages\n"
+            "`/bridge setavatar` — Override the avatar shown on relayed messages (image URL)\n"
+            "`/bridge setpurpose` — Add a label so everyone knows what a bridge is for\n\n"
+            "**Control mentions:**\n"
+            "```\n/bridge setping bridge_id: a1b2c3d4  mode: none\n```\n"
+            "• `none` — Role mentions are stripped (recommended for public bridges)\n"
+            "• `role` — Role mentions pass through\n"
+            "• `all` — Everything passes through\n\n"
+            "**Control links:**\n"
+            "```\n/bridge setlinks bridge_id: a1b2c3d4  mode: safe\n```\n"
+            "• `safe` — Only known-safe domains (YouTube, Discord, GitHub, etc.) pass through\n"
+            "• `warn` — Unknown links get a ⚠️ prefix\n"
+            "• `all` — All links pass through\n\n"
+            "**Auto-pause on a schedule** (e.g. overnight):\n"
+            "```\n/bridge scheduleset bridge_id: a1b2c3d4  pause_hour: 22  resume_hour: 8\n```\n"
+            "Uses UTC time. Bridge auto-pauses at 22:00 UTC and resumes at 08:00 UTC every day."
+        ),
+        color=0x5865F2,
+    ),
+    discord.Embed(
+        title="🌉 BridgeBot Tutorial — Page 6 of 8: Federations",
+        description=(
+            "A **federation** is a named alliance of multiple servers. "
+            "It unlocks cross-server features like polls and hub broadcasts.\n\n"
+            "**Create a federation (you become the owner):**\n"
+            "```\n/federation create  name: My Alliance  description: Gaming community\n```\n"
+            "**Invite another server to join:**\n"
+            "```\n/federation invite  federation_id: abc123  server_id: 111222333\n```\n"
+            "The invited server accepts with `/federation accept`.\n\n"
+            "**List your federations:**\n"
+            "```\n/federation list\n/federation info  federation_id: abc123\n/federation members  federation_id: abc123\n```\n"
+            "**Make your federation discoverable** (other servers can request to join):\n"
+            "```\n/federation publish  federation_id: abc123  category: gaming\n```\n"
+            "Servers find you with `/federation discover` and send a join request.\n"
+            "You approve/decline with `/federation review`.\n\n"
+            "**Leave a federation:**\n"
+            "```\n/federation leave  federation_id: abc123\n```"
+        ),
+        color=0x5865F2,
+    ),
+    discord.Embed(
+        title="🌉 BridgeBot Tutorial — Page 7 of 8: Advanced Features",
+        description=(
+            "**📊 Cross-server polls** (federation members only):\n"
+            "```\n/poll create  federation_id: abc123  question: Best game?  options: Minecraft,Fortnite,Roblox\n```\n"
+            "All members vote via buttons. Results update live across all servers.\n\n"
+            "**📢 Hub broadcasts** (announce to all federation servers):\n"
+            "```\n/hub set          → Set your server as the hub\n"
+            "/hub target       → Set where broadcasts land on your server\n"
+            "/hub broadcast    → Send an announcement to everyone\n```\n"
+            "**📋 Bridge templates** (save and reuse bridge settings):\n"
+            "```\n/template save    → Save current bridge settings as a template\n"
+            "/template load    → Apply a saved template to a new bridge\n"
+            "/template share   → Share your template publicly\n```\n"
+            "**🔗 Referrals** (track who brought you here):\n"
+            "```\n/referrals link   → Get your referral code to share\n"
+            "/referrals credit → Credit the server that referred you\n"
+            "/referrals stats  → See how many servers you've referred\n```\n"
+            "**⭐ Reputation** — Earned automatically. The more active your bridges, "
+            "the higher your score. Check the global ranking with `/leaderboard reputation`."
+        ),
+        color=0x5865F2,
+    ),
+    discord.Embed(
+        title="🌉 BridgeBot Tutorial — Page 8 of 8: Tips & Troubleshooting",
+        description=(
+            "**Common issues and fixes:**\n\n"
+            "❌ **Messages not relaying**\n"
+            "→ Run `/status` to check bridge health\n"
+            "→ Make sure BridgeBot has **Manage Webhooks** in the bridged channel\n"
+            "→ Run `/bridge repair` if a webhook is missing\n\n"
+            "❌ **Bridge request not arriving in the other server**\n"
+            "→ The other server needs BridgeBot added and a channel the bot can post in\n"
+            "→ Ask their admin to check their `#bridge-admin` channel\n\n"
+            "❌ **Bridge got auto-paused**\n"
+            "→ If no messages for 14 days, bridges auto-pause. Use `/bridge resume`\n"
+            "→ Bridges inactive for 37 days are permanently deleted\n\n"
+            "❌ **Webhook broken / spam pause**\n"
+            "→ If 15+ messages hit a bridge in 10 seconds, it spam-pauses for 60s automatically\n"
+            "→ Use `/bridge repair` to fix deleted webhooks\n\n"
+            "**Useful daily commands:**\n"
+            "```\n"
+            "/bridges          → Quick list of all your bridges\n"
+            "/status           → Health check for all bridges\n"
+            "/bridge analytics → Message stats per bridge\n"
+            "/leaderboard server → Your server's global rank\n"
+            "```\n"
+            "That's everything! Use `/help` for a full command reference."
+        ),
+        color=0x57F287,
+    ),
+]
+
+
+class TutorialView(discord.ui.View):
+    def __init__(self, page: int = 0):
+        super().__init__(timeout=300)
+        self.page = page
+        self._update_buttons()
+
+    def _update_buttons(self):
+        self.prev_button.disabled = self.page == 0
+        self.next_button.disabled = self.page == len(TUTORIAL_PAGES) - 1
+        self.page_label.label = f"{self.page + 1} / {len(TUTORIAL_PAGES)}"
+
+    def _embed(self):
+        e = TUTORIAL_PAGES[self.page].copy()
+        e.set_footer(text="Use the buttons below to navigate • Only visible to you")
+        return e
+
+    @discord.ui.button(label="← Previous", style=discord.ButtonStyle.secondary)
+    async def prev_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        self.page -= 1
+        self._update_buttons()
+        await interaction.response.edit_message(embed=self._embed(), view=self)
+
+    @discord.ui.button(label="1 / 8", style=discord.ButtonStyle.primary, disabled=True)
+    async def page_label(self, interaction: discord.Interaction, button: discord.ui.Button):
+        pass
+
+    @discord.ui.button(label="Next →", style=discord.ButtonStyle.secondary)
+    async def next_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        self.page += 1
+        self._update_buttons()
+        await interaction.response.edit_message(embed=self._embed(), view=self)
+
 
 class InfoCog(commands.Cog, name="Info"):
     def __init__(self, bot):
@@ -171,12 +386,23 @@ class InfoCog(commands.Cog, name="Info"):
                 "`/leaderboard server` — Your server's rank\n"
                 "`/referrals link` / `credit` / `stats` — Referral tracking\n"
                 "`/banrelay enable/disable/status` — Ban relay across feds\n"
+                "`/tutorial` — Interactive 8-page setup guide (Admin)\n"
                 "`/ping` / `/stats` / `/bridges` / `/status` / `/report`"
             ),
             inline=False,
         )
         embed.set_footer(text="Permissions: Member < Mod (Manage Messages) < Admin (Manage Server) < Owner")
         await interaction.response.send_message(embed=embed, ephemeral=True)
+
+    @app_commands.command(name="tutorial", description="Interactive step-by-step guide to setting up and using BridgeBot (Admin only)")
+    async def tutorial(self, interaction: discord.Interaction):
+        from core.permissions import get_perm_level, PermLevel
+        level = await get_perm_level(interaction)
+        if level < PermLevel.ADMIN:
+            await interaction.response.send_message("❌ The tutorial is for admins only.", ephemeral=True)
+            return
+        view = TutorialView(page=0)
+        await interaction.response.send_message(embed=view._embed(), view=view, ephemeral=True)
 
     @app_commands.command(name="report", description="Report a user from a bridged server")
     @app_commands.describe(user_id="The user's Discord ID", reason="What did they do?")
