@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>BridgeBot — Privacy Policy</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { background: #0d0f1a; color: #dcddde; font-family: 'Segoe UI', sans-serif; line-height: 1.7; }
+    .container { max-width: 760px; margin: 0 auto; padding: 60px 24px; }
+    .logo { display: flex; align-items: center; gap: 12px; margin-bottom: 48px; }
+    .logo-icon { width: 48px; height: 48px; background: #5865F2; border-radius: 12px; display: flex; align-items: center; justify-content: center; font-size: 24px; }
+    .logo-name { font-size: 22px; font-weight: 700; color: #fff; }
+    h1 { font-size: 32px; font-weight: 800; color: #fff; margin-bottom: 8px; }
+    .subtitle { color: #8e9297; margin-bottom: 48px; font-size: 14px; }
+    h2 { font-size: 18px; font-weight: 700; color: #fff; margin: 36px 0 12px; }
+    p { color: #b9bbbe; margin-bottom: 12px; font-size: 15px; }
+    ul { color: #b9bbbe; padding-left: 20px; margin-bottom: 12px; font-size: 15px; }
+    ul li { margin-bottom: 6px; }
+    table { width: 100%; border-collapse: collapse; margin: 16px 0 24px; font-size: 14px; }
+    th { background: #2f3136; color: #fff; padding: 10px 14px; text-align: left; font-weight: 600; }
+    td { padding: 10px 14px; color: #b9bbbe; border-bottom: 1px solid #2f3136; vertical-align: top; }
+    .divider { border: none; border-top: 1px solid #2f3136; margin: 48px 0; }
+    footer { color: #72767d; font-size: 13px; margin-top: 60px; }
+    a { color: #5865F2; text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    .badge { display: inline-block; background: #57F287; color: #000; font-size: 11px; font-weight: 700; padding: 2px 8px; border-radius: 4px; margin-left: 8px; vertical-align: middle; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="logo">
+      <div class="logo-icon">🌉</div>
+      <span class="logo-name">BridgeBot</span>
+    </div>
+
+    <h1>Privacy Policy</h1>
+    <p class="subtitle">Last updated: July 3, 2026</p>
+
+    <p>BridgeBot is designed with privacy in mind. We collect only what is strictly necessary to operate the bot. We do not sell, share, or monetize any data.</p>
+
+    <h2>1. What We Collect</h2>
+    <table>
+      <tr><th>Data</th><th>Why We Collect It</th><th>Stored?</th></tr>
+      <tr><td>Server ID</td><td>To identify your server's configuration</td><td>Yes</td></tr>
+      <tr><td>Channel IDs</td><td>To know which channels are bridged</td><td>Yes</td></tr>
+      <tr><td>User ID (of admins)</td><td>To record who created/deleted bridges (audit log)</td><td>Yes</td></tr>
+      <tr><td>Message metadata</td><td>To prevent relay loops (original + relayed message IDs, stored 30 days)</td><td>30 days</td></tr>
+      <tr><td>Message content</td><td>Relayed in real-time — not stored</td><td><strong>No</strong></td></tr>
+      <tr><td>Usernames / avatars</td><td>Used in-memory during relay — not stored</td><td><strong>No</strong></td></tr>
+    </table>
+
+    <h2>2. What We Do NOT Collect</h2>
+    <ul>
+      <li>Message content (not stored at any point)</li>
+      <li>Usernames, display names, or profile pictures (used temporarily in memory only)</li>
+      <li>Email addresses or personal information</li>
+      <li>DMs or private channels</li>
+      <li>Voice data of any kind</li>
+    </ul>
+
+    <h2>3. How Data Is Used</h2>
+    <p>All collected data is used exclusively to operate BridgeBot's features:</p>
+    <ul>
+      <li>Server and channel IDs — to route relayed messages between bridges</li>
+      <li>Admin user IDs — to record audit log entries visible only to your server's admins</li>
+      <li>Message metadata — to detect and prevent message relay loops; deleted after 30 days</li>
+      <li>Bridge statistics — aggregated message counts per bridge, used for analytics and leaderboards</li>
+    </ul>
+
+    <h2>4. Data Sharing</h2>
+    <p>We do not sell, rent, or share any data with third parties. Data is stored locally on our servers and is never transmitted externally.</p>
+    <p>Note: when a bridge is active, message content is relayed between two Discord servers. By creating a bridge, both server admins consent to this relay. We have no control over what the receiving server does with messages visible in their channels.</p>
+
+    <h2>5. Data Retention</h2>
+    <ul>
+      <li><strong>Message relay metadata</strong> — automatically deleted after 30 days</li>
+      <li><strong>Bridge and server configuration</strong> — retained until the bridge is deleted or the bot is removed</li>
+      <li><strong>Audit logs</strong> — retained indefinitely; visible only to your server's admins</li>
+    </ul>
+    <p>When BridgeBot is removed from a server, that server's data is marked as inactive but not immediately purged, to allow rejoining without reconfiguration. You may request full deletion by contacting us.</p>
+
+    <h2>6. Data Security</h2>
+    <p>Data is stored in a private database accessible only by the bot process. We do not expose raw database access to any third party. Webhook URLs are stored securely and are only used to relay messages.</p>
+
+    <h2>7. Your Rights</h2>
+    <p>You have the right to:</p>
+    <ul>
+      <li>Request deletion of your server's data by removing the bot and contacting us</li>
+      <li>Request a summary of what data is stored for your server</li>
+      <li>Export your bridge configuration at any time using <code>/export</code></li>
+    </ul>
+
+    <h2>8. Children's Privacy</h2>
+    <p>BridgeBot is not directed at children under 13. We do not knowingly collect data from users under 13. If you believe a user under 13 is using the bot, please contact us.</p>
+
+    <h2>9. Changes to This Policy</h2>
+    <p>We may update this Privacy Policy from time to time. The "last updated" date at the top reflects the most recent revision. Continued use of BridgeBot after changes constitutes acceptance.</p>
+
+    <h2>10. Contact</h2>
+    <p>For privacy requests or questions, please reach out via our Discord support server or contact the bot developer directly on Discord.</p>
+
+    <hr class="divider"/>
+    <footer>
+      © 2026 BridgeBot — <a href="tos.html">Terms of Service</a>
+    </footer>
+  </div>
+</body>
+</html>
