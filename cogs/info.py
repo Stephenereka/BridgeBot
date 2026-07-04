@@ -219,6 +219,227 @@ class TutorialView(discord.ui.View):
         await interaction.response.edit_message(embed=self._embed(), view=self)
 
 
+SUPPORT_SERVER = "https://discord.gg/RjrVAeB3R"
+
+HELP_PAGES = [
+    discord.Embed(
+        title="🌉 BridgeBot — Overview",
+        description=(
+            "**Connect Discord servers with live channel bridges.**\n"
+            "Messages relay instantly with real names and avatars — no bots, no copy-paste.\n\n"
+            "**Quick Start**\n"
+            "`/setup` — First-time setup wizard\n"
+            "`/bridge create` — Request a channel bridge with another server\n"
+            "`/federation create` — Group servers into an alliance\n"
+            "`/tutorial` — Full interactive guide (Admin only)\n\n"
+            "**Utility**\n"
+            "`/bridges` — List all bridges on this server\n"
+            "`/status` — Bridge health check\n"
+            "`/ping` — Check bot latency\n"
+            "`/stats` — Global BridgeBot statistics\n"
+            "`/report` — Report a user from a bridged server"
+        ),
+        color=0x5865F2,
+    ),
+    discord.Embed(
+        title="🌉 Bridge Commands",
+        description=(
+            "**Create & Manage**\n"
+            "`/bridge create` — Request a channel bridge\n"
+            "`/bridge forum` — Bridge two forum channels\n"
+            "`/bridge list` — List all your bridges\n"
+            "`/bridge delete` — Remove a bridge permanently\n"
+            "`/bridge pause` — Pause relaying (keeps bridge alive)\n"
+            "`/bridge resume` — Resume a paused bridge\n"
+            "`/bridge repair` — Fix broken webhooks\n"
+            "`/bridge analytics` — Stats: 7d / 30d / all-time\n"
+            "`/bridge toggle` — Toggle edits, deletes, embeds, attachments\n"
+            "`/bridge suggest` — Suggest a bridge (any member)\n\n"
+            "**Customization**\n"
+            "`/bridge setname` — Custom display name for relayed messages\n"
+            "`/bridge setavatar` — Custom avatar URL for relayed messages\n"
+            "`/bridge setpurpose` — Label what a bridge is for\n"
+            "`/bridge setping` — Control mention passthrough (`none` / `role` / `all`)\n"
+            "`/bridge setlinks` — Link filtering (`safe` / `warn` / `all`)\n"
+            "`/bridge scheduleset` — Auto-pause between hours (UTC)\n"
+            "`/bridge scheduleclear` — Remove auto-pause schedule"
+        ),
+        color=0x5865F2,
+    ),
+    discord.Embed(
+        title="🏛️ Federation Commands",
+        description=(
+            "**Setup**\n"
+            "`/federation create` — Create a federation (you become owner)\n"
+            "`/federation invite` — Invite another server\n"
+            "`/federation accept` — Accept an invite\n"
+            "`/federation decline` — Decline an invite\n"
+            "`/federation leave` — Leave a federation\n\n"
+            "**Browse**\n"
+            "`/federation list` — List federations you're in\n"
+            "`/federation info` — Details about a federation\n"
+            "`/federation members` — See all member servers\n\n"
+            "**Public Directory**\n"
+            "`/federation publish` — List your federation publicly\n"
+            "`/federation unpublish` — Remove from public directory\n"
+            "`/federation discover` — Browse public federations\n"
+            "`/federation request` — Send a join request\n"
+            "`/federation review` — Approve / decline join requests\n\n"
+            "**Owner Only**\n"
+            "`/federation delete` — Disband federation\n"
+            "`/federation kick` — Remove a server\n"
+            "`/federation transfer` — Transfer ownership"
+        ),
+        color=0x5865F2,
+    ),
+    discord.Embed(
+        title="📊 Polls, Hub & Templates",
+        description=(
+            "**Cross-Server Polls** *(federation members only)*\n"
+            "`/poll create` — Create a vote across all federation servers\n"
+            "`/poll end` — Close a poll early\n"
+            "`/poll results` — See current results\n"
+            "`/poll list` — List active polls\n\n"
+            "**Hub Broadcasts** *(send announcements to all federation servers)*\n"
+            "`/hub set` — Set your server as the federation hub\n"
+            "`/hub broadcast` — Send an announcement to all servers\n"
+            "`/hub target` — Set where incoming broadcasts land\n\n"
+            "**Bridge Templates** *(save & reuse bridge settings)*\n"
+            "`/template save` — Save a bridge's settings as a template\n"
+            "`/template load` — Apply a saved template to a bridge\n"
+            "`/template list` — View your saved templates\n"
+            "`/template share` — Share a template publicly"
+        ),
+        color=0x5865F2,
+    ),
+    discord.Embed(
+        title="⚙️ Setup & Configuration",
+        description=(
+            "**Initial Setup**\n"
+            "`/setup` — Step-by-step first-time setup wizard\n"
+            "`/config view` — View all current settings\n"
+            "`/config set` — Change a setting (admin channel, audit log, role, etc.)\n\n"
+            "**Access Control**\n"
+            "`/blacklist add` — Block a server from bridging with you\n"
+            "`/blacklist remove` — Unblock a server\n"
+            "`/blacklist list` — View blocked servers\n"
+            "`/rolesync add` — Sync a role across bridged servers\n"
+            "`/rolesync remove` — Remove a role sync\n"
+            "`/rolesync list` — View active role syncs\n"
+            "`/rolesync toggle` — Enable/disable role sync\n\n"
+            "**Data & Alerts**\n"
+            "`/export` — Export config as JSON backup\n"
+            "`/config import` — Restore config from a JSON file\n"
+            "`/bridgealert` — Set channel for bridge alerts\n"
+            "`/digest on` / `off` — Weekly activity digest\n"
+            "`/webhook rotate` — Rotate all webhook URLs"
+        ),
+        color=0x5865F2,
+    ),
+    discord.Embed(
+        title="🚫 Moderation & Safety",
+        description=(
+            "**Ban Relay** *(requires a federation)*\n"
+            "`/banrelay enable` — Enable ban relay for a federation\n"
+            "  • `mode: automatic` — fires on every ban\n"
+            "  • `mode: manual only` — only fires when you use `/banrelay ban`\n"
+            "  • `auto_ban: True` — auto-bans user in all federated servers\n"
+            "`/banrelay ban` — Manually relay a ban with a custom reason\n"
+            "  *(use this when another bot did the ban and the reason is missing)*\n"
+            "`/banrelay disable` — Disable ban relay\n"
+            "`/banrelay status` — Check relay mode per federation\n"
+            "`/banrelay exclude` — Exclude a user from being relayed\n\n"
+            "**Reports**\n"
+            "`/report` — Report a user from a bridged server to your mods"
+        ),
+        color=0xED4245,
+    ),
+    discord.Embed(
+        title="🏆 Leaderboards, Stats & Referrals",
+        description=(
+            "**Leaderboards**\n"
+            "`/leaderboard bridges` — Servers with the most bridges\n"
+            "`/leaderboard messages` — Servers with the most messages relayed\n"
+            "`/leaderboard federations` — Largest federations\n"
+            "`/leaderboard activity` — Most active bridges\n"
+            "`/leaderboard reputation` — Server reputation scores & tiers\n"
+            "`/leaderboard server` — Your server's rank and reputation badge\n\n"
+            "**Reputation Tiers** *(earned automatically)*\n"
+            "🥉 Newcomer → 🥈 Connector → 🥇 Bridge Builder\n"
+            "💎 Network Leader → 👑 Network Champion\n\n"
+            "**Referrals**\n"
+            "`/referrals link` — Get your server's referral code\n"
+            "`/referrals credit` — Credit a server that referred you\n"
+            "`/referrals stats` — See how many servers you've brought in"
+        ),
+        color=0xFEE75C,
+    ),
+]
+
+HELP_CATEGORY_LABELS = [
+    "🌉 Overview",
+    "🌉 Bridges",
+    "🏛️ Federations",
+    "📊 Polls & Hub",
+    "⚙️ Config",
+    "🚫 Moderation",
+    "🏆 Leaderboards",
+]
+
+
+class HelpSelect(discord.ui.Select):
+    def __init__(self, view_ref):
+        options = [
+            discord.SelectOption(label=label, value=str(i))
+            for i, label in enumerate(HELP_CATEGORY_LABELS)
+        ]
+        super().__init__(placeholder="Jump to a category...", options=options, row=0)
+        self._view_ref = view_ref
+
+    async def callback(self, interaction: discord.Interaction):
+        self._view_ref.page = int(self.values[0])
+        self._view_ref._update_buttons()
+        await interaction.response.edit_message(embed=self._view_ref._embed(), view=self._view_ref)
+
+
+class HelpView(discord.ui.View):
+    def __init__(self, page: int = 0):
+        super().__init__(timeout=300)
+        self.page = page
+        self.add_item(HelpSelect(self))
+        self._update_buttons()
+
+    def _update_buttons(self):
+        self.prev_button.disabled = self.page == 0
+        self.next_button.disabled = self.page == len(HELP_PAGES) - 1
+        self.page_label.label = f"{self.page + 1} / {len(HELP_PAGES)}"
+
+    def _embed(self):
+        e = HELP_PAGES[self.page].copy()
+        e.set_footer(text=f"BridgeBot • {HELP_CATEGORY_LABELS[self.page]} • Use /tutorial for the full setup guide")
+        return e
+
+    @discord.ui.button(label="← Prev", style=discord.ButtonStyle.secondary, row=1)
+    async def prev_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        self.page -= 1
+        self._update_buttons()
+        await interaction.response.edit_message(embed=self._embed(), view=self)
+
+    @discord.ui.button(label="1 / 7", style=discord.ButtonStyle.primary, disabled=True, row=1)
+    async def page_label(self, interaction: discord.Interaction, button: discord.ui.Button):
+        pass
+
+    @discord.ui.button(label="Next →", style=discord.ButtonStyle.secondary, row=1)
+    async def next_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        self.page += 1
+        self._update_buttons()
+        await interaction.response.edit_message(embed=self._embed(), view=self)
+
+    @discord.ui.button(label="💬 Support Server", style=discord.ButtonStyle.link, url=SUPPORT_SERVER, row=1)
+    async def support_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        pass
+
+
 class InfoCog(commands.Cog, name="Info"):
     def __init__(self, bot):
         self.bot = bot
@@ -303,96 +524,10 @@ class InfoCog(commands.Cog, name="Info"):
 
         await interaction.followup.send(embed=embed, ephemeral=True)
 
-    @app_commands.command(name="help", description="Show all BridgeBot commands")
+    @app_commands.command(name="help", description="Browse all BridgeBot commands by category")
     async def help(self, interaction: discord.Interaction):
-        embed = discord.Embed(
-            title="🌉 BridgeBot — Command Reference",
-            description="Connect Discord servers with channel bridges and federations.",
-            color=0x5865F2,
-        )
-        embed.add_field(
-            name="🌉 Bridge Commands",
-            value=(
-                "`/bridge create` — Request a channel bridge\n"
-                "`/bridge forum` — Bridge two forum channels\n"
-                "`/bridge list` — List all your bridges\n"
-                "`/bridge delete` — Remove a bridge\n"
-                "`/bridge pause` / `resume` — Pause or resume a bridge\n"
-                "`/bridge toggle` — Toggle relay settings\n"
-                "`/bridge repair` — Fix broken webhooks\n"
-                "`/bridge analytics` — Message stats (7d / 30d / all-time)\n"
-                "`/bridge setname` — Custom display name for relay\n"
-                "`/bridge setavatar` — Custom avatar for relay\n"
-                "`/bridge setping` — Control how mentions are handled\n"
-                "`/bridge setlinks` — Control link filtering\n"
-                "`/bridge setpurpose` — Label what a bridge is for\n"
-                "`/bridge scheduleset` — Auto-pause during certain hours\n"
-                "`/bridge scheduleclear` — Remove schedule\n"
-                "`/bridge suggest` — Suggest a bridge (any member)"
-            ),
-            inline=False,
-        )
-        embed.add_field(
-            name="🏛️ Federation Commands",
-            value=(
-                "`/federation create` — Create a federation\n"
-                "`/federation invite` — Invite a server\n"
-                "`/federation accept` / `decline` — Respond to invites\n"
-                "`/federation leave` — Leave a federation\n"
-                "`/federation list` / `info` / `members` — View federations\n"
-                "`/federation publish` — List in the public directory\n"
-                "`/federation discover` — Browse public federations\n"
-                "`/federation request` — Request to join a public federation\n"
-                "`/federation review` — Approve/decline join requests\n"
-                "`/federation delete` / `kick` / `transfer` — Manage (owner)"
-            ),
-            inline=False,
-        )
-        embed.add_field(
-            name="📊 Polls, Hub & Templates",
-            value=(
-                "`/poll create` — Cross-server federation poll\n"
-                "`/poll end` / `results` / `list` — Manage polls\n"
-                "`/hub set` — Set federation hub channel\n"
-                "`/hub broadcast` — Announce to all federation servers\n"
-                "`/hub target` — Set where broadcasts go for your server\n"
-                "`/template save` / `load` / `list` / `share` — Bridge templates"
-            ),
-            inline=False,
-        )
-        embed.add_field(
-            name="⚙️ Setup & Config",
-            value=(
-                "`/setup` — First-time setup wizard\n"
-                "`/config view` / `set` — Server configuration\n"
-                "`/blacklist add/remove/list` — Block servers\n"
-                "`/rolesync add/remove/list/toggle` — Cross-server role sync\n"
-                "`/bridgealert` — Set webhook alert channel\n"
-                "`/export` — Export config as JSON\n"
-                "`/config import` — Restore config from JSON\n"
-                "`/digest on/off` — Weekly stats digest\n"
-                "`/webhook rotate` — Rotate webhook URLs"
-            ),
-            inline=False,
-        )
-        embed.add_field(
-            name="🏆 Leaderboards & Info",
-            value=(
-                "`/leaderboard bridges` — Most bridges globally\n"
-                "`/leaderboard messages` — Most messages relayed\n"
-                "`/leaderboard federations` — Largest federations\n"
-                "`/leaderboard activity` — Most active bridges\n"
-                "`/leaderboard reputation` — Server reputation scores\n"
-                "`/leaderboard server` — Your server's rank\n"
-                "`/referrals link` / `credit` / `stats` — Referral tracking\n"
-                "`/banrelay enable/disable/status` — Ban relay across feds\n"
-                "`/tutorial` — Interactive 8-page setup guide (Admin)\n"
-                "`/ping` / `/stats` / `/bridges` / `/status` / `/report`"
-            ),
-            inline=False,
-        )
-        embed.set_footer(text="Permissions: Member < Mod (Manage Messages) < Admin (Manage Server) < Owner")
-        await interaction.response.send_message(embed=embed, ephemeral=True)
+        view = HelpView(page=0)
+        await interaction.response.send_message(embed=view._embed(), view=view, ephemeral=True)
 
     @app_commands.command(name="tutorial", description="Interactive step-by-step guide to setting up and using BridgeBot (Admin only)")
     async def tutorial(self, interaction: discord.Interaction):
