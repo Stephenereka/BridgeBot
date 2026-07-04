@@ -51,6 +51,7 @@ class BridgeBot(commands.Bot):
             'cogs.polls',
             'cogs.hub',
             'cogs.templates',
+            'cogs.referrals',
         ]
         for cog in cogs:
             await self.load_extension(cog)
@@ -63,6 +64,8 @@ class BridgeBot(commands.Bot):
         self.purge_old_data.start()
         self.inactive_bridge_check.start()
         self.anniversary_check.start()
+        self.schedule_check.start()
+        self.update_reputation.start()
         self.weekly_digest.start()
 
     async def on_ready(self):
@@ -263,6 +266,61 @@ class BridgeBot(commands.Bot):
     async def before_anniversary(self):
         await self.wait_until_ready()
 
+    @tasks.loop(minutes=60)
+    async def schedule_check(self):
+        """Pause/resume bridges based on their schedule settings."""
+        try:
+            from datetime import datetime, timezone
+            now = datetime.now(timezone.utc)
+            current_hour = now.hour
+            current_day = now.weekday()
+
+            bridges = await self.db.get_scheduled_bridges()
+            for bridge in bridges:
+                pause_hour = bridge['schedule_pause_hour']
+                resume_hour = bridge['schedule_resume_hour']
+                if pause_hour is None or resume_hour is None:
+                    continue
+
+                schedule_days = bridge['schedule_days']
+                if schedule_days:
+                    allowed_days = [int(d) for d in schedule_days.split(',') if d.strip().isdigit()]
+                    if current_day not in allowed_days:
+                        if bridge['schedule_paused']:
+                            await self.db.update_bridge_column(bridge['id'], 'schedule_paused', 0)
+                            self.relay.invalidate_bridge_cache()
+                        continue
+
+                if pause_hour < resume_hour:
+                    should_pause = pause_hour <= current_hour < resume_hour
+                else:
+                    should_pause = current_hour >= pause_hour or current_hour < resume_hour
+
+                currently_paused = bool(bridge['schedule_paused'])
+                if should_pause and not currently_paused:
+                    await self.db.update_bridge_column(bridge['id'], 'schedule_paused', 1)
+                    self.relay.invalidate_bridge_cache()
+                elif not should_pause and currently_paused:
+                    await self.db.update_bridge_column(bridge['id'], 'schedule_paused', 0)
+                    self.relay.invalidate_bridge_cache()
+        except Exception as e:
+            print(f'Schedule check error: {e}')
+
+    @schedule_check.before_loop
+    async def before_schedule_check(self):
+        await self.wait_until_ready()
+
+    @tasks.loop(hours=24)
+    async def update_reputation(self):
+        try:
+            await self.db.update_all_reputations()
+        except Exception as e:
+            print(f'Reputation update error: {e}')
+
+    @update_reputation.before_loop
+    async def before_reputation(self):
+        await self.wait_until_ready()
+
     @tasks.loop(hours=168)
     async def weekly_digest(self):
         try:
@@ -335,11 +393,24 @@ class BridgeBot(commands.Bot):
                 if not other_ch:
                     continue
                 try:
-                    other_thread = await other_ch.create_thread(
-                        name=thread.name,
-                        type=thread.type if thread.type != discord.ChannelType.news_thread else discord.ChannelType.public_thread,
-                        reason="BridgeBot thread mirror",
-                    )
+                    is_forum = isinstance(other_ch, discord.ForumChannel)
+                    if is_forum:
+                        # Create matching forum post
+                        other_thread, _ = await other_ch.create_thread(
+                            name=thread.name,
+                            content=f"🔗 Thread bridged from **{thread.guild.name}**",
+                            reason="BridgeBot forum bridge",
+                        )
+                    else:
+                        other_thread = await other_ch.create_thread(
+                            name=thread.name,
+                            type=thread.type if thread.type != discord.ChannelType.news_thread else discord.ChannelType.public_thread,
+                            reason="BridgeBot thread mirror",
+                        )
+                        await other_thread.send(embed=discord.Embed(
+                            description=f"🔗 This thread is bridged from **{thread.guild.name}**",
+                            color=0x5865F2,
+                        ))
                     await self.db.add_thread_bridge(
                         str(__import__('uuid').uuid4()),
                         bridge['id'],
@@ -348,10 +419,6 @@ class BridgeBot(commands.Bot):
                         other_thread.id,
                         other_ch.guild.id,
                     )
-                    await other_thread.send(embed=discord.Embed(
-                        description=f"🔗 This thread is bridged from **{thread.guild.name}**",
-                        color=0x5865F2,
-                    ))
                 except Exception as e:
                     print(f'Thread bridge create error: {e}')
         except Exception as e:

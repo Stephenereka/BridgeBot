@@ -206,6 +206,35 @@ class Database:
                 UNIQUE(federation_id, server_id)
             );
 
+            CREATE TABLE IF NOT EXISTS federation_join_requests (
+                id TEXT PRIMARY KEY,
+                federation_id TEXT NOT NULL,
+                requesting_server_id INTEGER NOT NULL,
+                requesting_user_id INTEGER NOT NULL,
+                message TEXT,
+                status TEXT DEFAULT 'pending',
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(federation_id, requesting_server_id)
+            );
+
+            CREATE TABLE IF NOT EXISTS bridge_suggestions (
+                id TEXT PRIMARY KEY,
+                suggesting_server_id INTEGER NOT NULL,
+                suggesting_user_id INTEGER NOT NULL,
+                target_server_id INTEGER NOT NULL,
+                message TEXT,
+                status TEXT DEFAULT 'pending',
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+
+            CREATE TABLE IF NOT EXISTS referrals (
+                id TEXT PRIMARY KEY,
+                referrer_server_id INTEGER NOT NULL,
+                referred_server_id INTEGER NOT NULL,
+                credited_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(referred_server_id)
+            );
+
             CREATE INDEX IF NOT EXISTS idx_thread_bridges_a ON thread_bridges(thread_a_id);
             CREATE INDEX IF NOT EXISTS idx_thread_bridges_b ON thread_bridges(thread_b_id);
             CREATE INDEX IF NOT EXISTS idx_polls_fed ON polls(federation_id);
@@ -268,6 +297,66 @@ class Database:
             pass
         try:
             await self._conn.execute("ALTER TABLE servers ADD COLUMN digest_channel_id INTEGER")
+            await self._conn.commit()
+        except Exception:
+            pass
+        try:
+            await self._conn.execute("ALTER TABLE channel_bridges ADD COLUMN webhook_display_name TEXT")
+            await self._conn.commit()
+        except Exception:
+            pass
+        try:
+            await self._conn.execute("ALTER TABLE channel_bridges ADD COLUMN webhook_avatar_url TEXT")
+            await self._conn.commit()
+        except Exception:
+            pass
+        try:
+            await self._conn.execute("ALTER TABLE federations ADD COLUMN is_public INTEGER DEFAULT 0")
+            await self._conn.commit()
+        except Exception:
+            pass
+        try:
+            await self._conn.execute("ALTER TABLE federations ADD COLUMN category TEXT")
+            await self._conn.commit()
+        except Exception:
+            pass
+        try:
+            await self._conn.execute("ALTER TABLE federations ADD COLUMN listing_description TEXT")
+            await self._conn.commit()
+        except Exception:
+            pass
+        try:
+            await self._conn.execute("ALTER TABLE channel_bridges ADD COLUMN channel_type TEXT DEFAULT 'text'")
+            await self._conn.commit()
+        except Exception:
+            pass
+        try:
+            await self._conn.execute("ALTER TABLE channel_bridges ADD COLUMN schedule_pause_hour INTEGER")
+            await self._conn.commit()
+        except Exception:
+            pass
+        try:
+            await self._conn.execute("ALTER TABLE channel_bridges ADD COLUMN schedule_resume_hour INTEGER")
+            await self._conn.commit()
+        except Exception:
+            pass
+        try:
+            await self._conn.execute("ALTER TABLE channel_bridges ADD COLUMN schedule_days TEXT")
+            await self._conn.commit()
+        except Exception:
+            pass
+        try:
+            await self._conn.execute("ALTER TABLE channel_bridges ADD COLUMN schedule_paused INTEGER DEFAULT 0")
+            await self._conn.commit()
+        except Exception:
+            pass
+        try:
+            await self._conn.execute("ALTER TABLE servers ADD COLUMN referred_by INTEGER")
+            await self._conn.commit()
+        except Exception:
+            pass
+        try:
+            await self._conn.execute("ALTER TABLE servers ADD COLUMN reputation_score REAL DEFAULT 0")
             await self._conn.commit()
         except Exception:
             pass
@@ -371,6 +460,35 @@ class Database:
             row = await cur.fetchone()
             return row['cnt'] if row else 0
 
+    async def get_bridge_analytics_detailed(self, bridge_id):
+        bridge = await self.get_bridge(bridge_id)
+        if not bridge:
+            return None
+        result = dict(bridge)
+        async with self._conn.execute(
+            "SELECT COUNT(*) as cnt FROM message_map WHERE bridge_id=? AND relayed_at > datetime('now', '-7 days')",
+            (bridge_id,)
+        ) as cur:
+            row = await cur.fetchone()
+            result['messages_7d'] = row['cnt'] if row else 0
+        async with self._conn.execute(
+            "SELECT COUNT(*) as cnt FROM message_map WHERE bridge_id=? AND relayed_at > datetime('now', '-30 days')",
+            (bridge_id,)
+        ) as cur:
+            row = await cur.fetchone()
+            result['messages_30d'] = row['cnt'] if row else 0
+        return result
+
+    # ── Bridge Suggestions ────────────────────────────────────────────────────
+
+    async def create_bridge_suggestion(self, sugg_id, suggesting_server_id, suggesting_user_id, target_server_id, message=None):
+        await self._conn.execute("""
+            INSERT OR IGNORE INTO bridge_suggestions
+            (id, suggesting_server_id, suggesting_user_id, target_server_id, message)
+            VALUES (?, ?, ?, ?, ?)
+        """, (sugg_id, suggesting_server_id, suggesting_user_id, target_server_id, message))
+        await self._conn.commit()
+
     # ── Message Map ────────────────────────────────────────────────────────────
 
     async def save_message_map(self, map_id, bridge_id, orig_msg_id, orig_ch_id, orig_sv_id, relay_msg_id, relay_ch_id, relay_sv_id):
@@ -450,6 +568,70 @@ class Database:
         await self._conn.execute("DELETE FROM federations WHERE id = ?", (fed_id,))
         await self._conn.commit()
 
+    # ── Federation Public Directory ────────────────────────────────────────────
+
+    async def publish_federation(self, fed_id, server_id, category, listing_description=None):
+        fed = await self.get_federation(fed_id)
+        if not fed or fed['owner_server_id'] != server_id:
+            return False
+        await self._conn.execute(
+            "UPDATE federations SET is_public=1, category=?, listing_description=? WHERE id=?",
+            (category, listing_description, fed_id)
+        )
+        await self._conn.commit()
+        return True
+
+    async def unpublish_federation(self, fed_id, server_id):
+        fed = await self.get_federation(fed_id)
+        if not fed or fed['owner_server_id'] != server_id:
+            return False
+        await self._conn.execute("UPDATE federations SET is_public=0 WHERE id=?", (fed_id,))
+        await self._conn.commit()
+        return True
+
+    async def get_public_federations(self, category=None):
+        if category:
+            async with self._conn.execute(
+                "SELECT f.*, COUNT(fm.server_id) as member_count FROM federations f "
+                "LEFT JOIN federation_members fm ON f.id=fm.federation_id AND fm.status='active' "
+                "WHERE f.is_public=1 AND f.category=? GROUP BY f.id ORDER BY member_count DESC LIMIT 20",
+                (category,)
+            ) as cur:
+                return await cur.fetchall()
+        else:
+            async with self._conn.execute(
+                "SELECT f.*, COUNT(fm.server_id) as member_count FROM federations f "
+                "LEFT JOIN federation_members fm ON f.id=fm.federation_id AND fm.status='active' "
+                "WHERE f.is_public=1 GROUP BY f.id ORDER BY member_count DESC LIMIT 20"
+            ) as cur:
+                return await cur.fetchall()
+
+    async def create_join_request(self, req_id, fed_id, requesting_server_id, requesting_user_id, message=None):
+        try:
+            await self._conn.execute("""
+                INSERT INTO federation_join_requests
+                (id, federation_id, requesting_server_id, requesting_user_id, message)
+                VALUES (?, ?, ?, ?, ?)
+            """, (req_id, fed_id, requesting_server_id, requesting_user_id, message))
+            await self._conn.commit()
+            return True
+        except Exception:
+            return False
+
+    async def get_pending_join_requests(self, federation_id):
+        async with self._conn.execute("""
+            SELECT * FROM federation_join_requests
+            WHERE federation_id=? AND status='pending'
+            ORDER BY created_at ASC
+        """, (federation_id,)) as cur:
+            return await cur.fetchall()
+
+    async def update_join_request(self, req_id, status):
+        await self._conn.execute(
+            "UPDATE federation_join_requests SET status=? WHERE id=?", (status, req_id)
+        )
+        await self._conn.commit()
+
     # ── Ban Relay ──────────────────────────────────────────────────────────────
 
     async def set_ban_relay(self, federation_id, server_id, enabled, auto_ban=False):
@@ -492,6 +674,43 @@ class Database:
             WHERE federation_id = ? AND user_id = ? AND banned_in_server = ? AND unbanned_at IS NULL
         """, (federation_id, user_id, banned_in_server))
         await self._conn.commit()
+
+    # ── Referrals ──────────────────────────────────────────────────────────────
+
+    async def credit_referral(self, referrer_server_id, referred_server_id):
+        # Check if this server already has a referral credited
+        async with self._conn.execute(
+            "SELECT id FROM referrals WHERE referred_server_id=?", (referred_server_id,)
+        ) as cur:
+            if await cur.fetchone():
+                return False  # Already credited
+        ref_id = str(__import__('uuid').uuid4())
+        await self._conn.execute("""
+            INSERT OR IGNORE INTO referrals (id, referrer_server_id, referred_server_id)
+            VALUES (?, ?, ?)
+        """, (ref_id, referrer_server_id, referred_server_id))
+        await self._conn.execute(
+            "UPDATE servers SET referred_by=? WHERE id=?", (referrer_server_id, referred_server_id)
+        )
+        await self._conn.commit()
+        return True
+
+    async def get_referrals(self, referrer_server_id):
+        async with self._conn.execute("""
+            SELECT r.*, s.name as referred_name
+            FROM referrals r
+            LEFT JOIN servers s ON r.referred_server_id = s.id
+            WHERE r.referrer_server_id=?
+            ORDER BY r.credited_at DESC
+        """, (referrer_server_id,)) as cur:
+            return await cur.fetchall()
+
+    async def get_referral_count(self, referrer_server_id):
+        async with self._conn.execute(
+            "SELECT COUNT(*) as cnt FROM referrals WHERE referrer_server_id=?", (referrer_server_id,)
+        ) as cur:
+            row = await cur.fetchone()
+            return row['cnt'] if row else 0
 
     # ── Role Mappings ──────────────────────────────────────────────────────────
 
@@ -571,12 +790,22 @@ class Database:
         stats = {}
         async with self._conn.execute("SELECT COUNT(*) as cnt FROM servers WHERE bot_kicked = 0") as cur:
             stats['servers'] = (await cur.fetchone())['cnt']
+        async with self._conn.execute("SELECT COUNT(DISTINCT id) as cnt FROM servers WHERE bot_kicked=0 AND id IN "
+            "(SELECT channel_a_server_id FROM channel_bridges WHERE active=1 UNION SELECT channel_b_server_id FROM channel_bridges WHERE active=1)"
+        ) as cur:
+            stats['active_servers'] = (await cur.fetchone())['cnt']
         async with self._conn.execute("SELECT COUNT(*) as cnt FROM channel_bridges WHERE active = 1") as cur:
             stats['bridges'] = (await cur.fetchone())['cnt']
         async with self._conn.execute("SELECT COUNT(*) as cnt FROM message_map") as cur:
             stats['messages_relayed'] = (await cur.fetchone())['cnt']
         async with self._conn.execute("SELECT COUNT(*) as cnt FROM federations") as cur:
             stats['federations'] = (await cur.fetchone())['cnt']
+        async with self._conn.execute("SELECT COUNT(*) as cnt FROM thread_bridges") as cur:
+            stats['thread_bridges'] = (await cur.fetchone())['cnt']
+        async with self._conn.execute("SELECT COUNT(*) as cnt FROM polls WHERE status='active'") as cur:
+            stats['active_polls'] = (await cur.fetchone())['cnt']
+        async with self._conn.execute("SELECT COALESCE(SUM(reputation_score), 0) as total_rep FROM servers WHERE bot_kicked=0") as cur:
+            stats['total_reputation'] = (await cur.fetchone())['total_rep']
         return stats
 
     async def leaderboard_bridges(self):
@@ -657,6 +886,63 @@ class Database:
                 return i + 1
         return None
 
+    # ── Reputation ─────────────────────────────────────────────────────────────
+
+    REPUTATION_TIERS = [
+        (1000, "🏆 Network Champion"),
+        (501,  "⭐ Network Leader"),
+        (201,  "🌉 Bridge Builder"),
+        (51,   "🔗 Connector"),
+        (0,    "🌱 Newcomer"),
+    ]
+
+    def get_reputation_badge(self, score: float) -> str:
+        for threshold, badge in self.REPUTATION_TIERS:
+            if score >= threshold:
+                return badge
+        return "🌱 Newcomer"
+
+    async def calculate_reputation(self, server_id):
+        bridges = await self.server_bridge_count(server_id)
+        messages = await self.server_message_count(server_id)
+        feds = await self.get_federations_for_server(server_id)
+        async with self._conn.execute("""
+            SELECT AVG(julianday('now') - julianday(created_at)) as avg_age
+            FROM channel_bridges
+            WHERE (channel_a_server_id=? OR channel_b_server_id=?) AND active=1
+        """, (server_id, server_id)) as cur:
+            row = await cur.fetchone()
+            avg_age = row['avg_age'] or 0
+        score = (messages / 10) + (bridges * 20) + (len(feds) * 15) + (avg_age * 0.1)
+        return round(score, 1)
+
+    async def update_all_reputations(self):
+        async with self._conn.execute("SELECT id FROM servers WHERE bot_kicked=0") as cur:
+            servers = await cur.fetchall()
+        for s in servers:
+            score = await self.calculate_reputation(s['id'])
+            await self._conn.execute("UPDATE servers SET reputation_score=? WHERE id=?", (score, s['id']))
+        await self._conn.commit()
+
+    async def leaderboard_reputation(self):
+        async with self._conn.execute("""
+            SELECT id, name, reputation_score FROM servers
+            WHERE bot_kicked=0 AND reputation_score > 0
+            ORDER BY reputation_score DESC
+            LIMIT 10
+        """) as cur:
+            return await cur.fetchall()
+
+    async def get_server_reputation_rank(self, server_id):
+        async with self._conn.execute("""
+            SELECT COUNT(*) as cnt FROM servers
+            WHERE bot_kicked=0 AND reputation_score > (
+                SELECT reputation_score FROM servers WHERE id=?
+            )
+        """, (server_id,)) as cur:
+            row = await cur.fetchone()
+            return (row['cnt'] or 0) + 1
+
     async def get_server_config_export(self, server_id):
         server = await self.get_server(server_id)
         bridges = await self.get_bridges_for_server(server_id)
@@ -675,7 +961,10 @@ class Database:
 
     async def update_bridge_column(self, bridge_id, column, value):
         ALLOWED = {'spam_paused', 'ping_mode', 'link_mode', 'purpose', 'paused', 'active',
-                   'relay_edits', 'relay_deletes', 'relay_attachments', 'relay_embeds', 'nsfw_allowed'}
+                   'relay_edits', 'relay_deletes', 'relay_attachments', 'relay_embeds', 'nsfw_allowed',
+                   'webhook_display_name', 'webhook_avatar_url',
+                   'schedule_pause_hour', 'schedule_resume_hour', 'schedule_days', 'schedule_paused',
+                   'channel_type'}
         if column not in ALLOWED:
             raise ValueError(f"Disallowed column: {column}")
         await self._conn.execute(f"UPDATE channel_bridges SET {column} = ? WHERE id = ?", (value, bridge_id))
@@ -687,6 +976,12 @@ class Database:
             (bridge_id,)
         )
         await self._conn.commit()
+
+    async def get_scheduled_bridges(self):
+        async with self._conn.execute(
+            "SELECT * FROM channel_bridges WHERE active=1 AND schedule_pause_hour IS NOT NULL"
+        ) as cur:
+            return await cur.fetchall()
 
     # ── Thread Bridges ─────────────────────────────────────────────────────────
 
@@ -834,6 +1129,33 @@ class Database:
             (federation_id, server_id)
         )
         await self._conn.commit()
+
+    # ── Config Import ─────────────────────────────────────────────────────────
+
+    async def restore_server_config(self, server_id, data):
+        """Restore server config from an export. Returns True on success."""
+        try:
+            server = data.get('server', {})
+            if server:
+                allowed_keys = {'admin_channel_id', 'audit_channel_id', 'alert_channel_id', 'admin_role_id', 'prefix',
+                                'digest_enabled', 'digest_channel_id'}
+                for key, value in server.items():
+                    if key in allowed_keys and value is not None:
+                        if isinstance(value, float):
+                            value = int(value) if not value.is_integer() else int(value)
+                        await self.update_server_config(server_id, key, value)
+            for bl in data.get('blacklist', []):
+                bl_id = str(uuid.uuid4())
+                await self.add_blacklist(bl_id, server_id, bl.get('blocked_server_id'))
+            for rm in data.get('role_mappings', []):
+                rm_id = str(uuid.uuid4())
+                await self.add_role_mapping(rm_id, rm.get('federation_id'), rm.get('source_server_id'),
+                                            rm.get('source_role_id'), rm.get('target_server_id'),
+                                            rm.get('target_role_id'))
+            return True
+        except Exception as e:
+            print(f'Config import error: {e}')
+            return False
 
     # ── Maintenance ────────────────────────────────────────────────────────────
 

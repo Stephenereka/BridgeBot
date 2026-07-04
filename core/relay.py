@@ -176,6 +176,8 @@ class RelayEngine:
             # Extra check: skip spam-paused bridges (cache may not reflect latest)
             if bridge.get('spam_paused'):
                 continue
+            if bridge.get('schedule_paused'):
+                continue
 
             if not await self._check_rate_limit(bridge['id']):
                 continue
@@ -210,8 +212,10 @@ class RelayEngine:
             if not content and not embeds:
                 continue
 
-            username = f"{message.author.display_name} • {message.guild.name}"
-            avatar_url = str(message.author.display_avatar.url)
+            custom_name = bridge.get('webhook_display_name')
+            custom_avatar = bridge.get('webhook_avatar_url')
+            username = custom_name if custom_name else f"{message.author.display_name} • {message.guild.name}"
+            avatar_url = custom_avatar if custom_avatar else str(message.author.display_avatar.url)
 
             relayed_id = await self.bot.webhook_manager.send_message(
                 webhook_url=webhook_url,

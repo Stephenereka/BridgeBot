@@ -273,6 +273,229 @@ class FederationCog(commands.Cog, name="Federation"):
         })
 
 
+    CATEGORIES = ['gaming', 'education', 'art', 'tech', 'creative', 'social', 'roleplay', 'other']
+
+    @fed.command(name="publish", description="List your federation in the public directory so others can discover and request to join")
+    @app_commands.describe(
+        federation_id="Federation ID you own",
+        category="Category for discoverability",
+        description="Public description (shown to servers browsing the directory)"
+    )
+    @app_commands.choices(category=[
+        app_commands.Choice(name="🎮 Gaming", value="gaming"),
+        app_commands.Choice(name="📚 Education", value="education"),
+        app_commands.Choice(name="🎨 Art & Creative", value="art"),
+        app_commands.Choice(name="💻 Tech", value="tech"),
+        app_commands.Choice(name="✍️ Creative Writing", value="creative"),
+        app_commands.Choice(name="💬 Social", value="social"),
+        app_commands.Choice(name="⚔️ Roleplay", value="roleplay"),
+        app_commands.Choice(name="🌐 Other", value="other"),
+    ])
+    @require_perm(PermLevel.OWNER)
+    async def fed_publish(self, interaction: discord.Interaction, federation_id: str, category: str, description: str = None):
+        await interaction.response.defer(ephemeral=True)
+        if description and len(description) > 200:
+            await interaction.followup.send("❌ Description must be 200 characters or fewer.", ephemeral=True)
+            return
+        success = await self.bot.db.publish_federation(federation_id, interaction.guild_id, category, description)
+        if not success:
+            await interaction.followup.send("❌ Federation not found or you don't own it.", ephemeral=True)
+            return
+        await interaction.followup.send(
+            f"✅ Your federation is now listed in the public directory under **{category}**. "
+            f"Other servers can find and request to join with `/federation discover`.",
+            ephemeral=True,
+        )
+        await send_audit_log(self.bot, interaction.guild_id, interaction.user, 'federation_published', {
+            'federation_id': federation_id, 'category': category,
+        })
+
+    @fed.command(name="unpublish", description="Remove your federation from the public directory")
+    @app_commands.describe(federation_id="Federation ID to make private again")
+    @require_perm(PermLevel.OWNER)
+    async def fed_unpublish(self, interaction: discord.Interaction, federation_id: str):
+        await interaction.response.defer(ephemeral=True)
+        success = await self.bot.db.unpublish_federation(federation_id, interaction.guild_id)
+        if not success:
+            await interaction.followup.send("❌ Federation not found or you don't own it.", ephemeral=True)
+            return
+        await interaction.followup.send("✅ Federation removed from the public directory.", ephemeral=True)
+
+    @fed.command(name="discover", description="Browse publicly listed federations you can request to join")
+    @app_commands.describe(category="Filter by category (optional)")
+    @app_commands.choices(category=[
+        app_commands.Choice(name="🎮 Gaming", value="gaming"),
+        app_commands.Choice(name="📚 Education", value="education"),
+        app_commands.Choice(name="🎨 Art & Creative", value="art"),
+        app_commands.Choice(name="💻 Tech", value="tech"),
+        app_commands.Choice(name="✍️ Creative Writing", value="creative"),
+        app_commands.Choice(name="💬 Social", value="social"),
+        app_commands.Choice(name="⚔️ Roleplay", value="roleplay"),
+        app_commands.Choice(name="🌐 Other", value="other"),
+    ])
+    async def fed_discover(self, interaction: discord.Interaction, category: str = None):
+        await interaction.response.defer(ephemeral=True)
+        feds = await self.bot.db.get_public_federations(category)
+        if not feds:
+            cat_str = f" in **{category}**" if category else ""
+            await interaction.followup.send(
+                f"No public federations found{cat_str}. Be the first to publish yours with `/federation publish`!",
+                ephemeral=True
+            )
+            return
+        cat_icons = {'gaming':'🎮','education':'📚','art':'🎨','tech':'💻','creative':'✍️','social':'💬','roleplay':'⚔️','other':'🌐'}
+        embed = discord.Embed(
+            title="🌐 Public Federation Directory",
+            description="Servers you can request to join. Use `/federation request <id>` to apply.",
+            color=0x5865F2,
+        )
+        for f in feds[:10]:
+            icon = cat_icons.get(f['category'] or 'other', '🌐')
+            members = f.get('member_count') or 0
+            desc = f['listing_description'] or f['description'] or 'No description.'
+            embed.add_field(
+                name=f"{icon} {f['name']} — {members} server(s)",
+                value=f"{desc[:100]}\n`ID: {f['id'][:8]}`  `Category: {f['category'] or 'other'}`",
+                inline=False,
+            )
+        embed.set_footer(text=f"Showing {len(feds)} public federation(s). Publish yours with /federation publish.")
+        await interaction.followup.send(embed=embed, ephemeral=True)
+
+    @fed.command(name="request", description="Request to join a public federation")
+    @app_commands.describe(
+        federation_id="Federation ID from /federation discover",
+        message="Optional message to the federation owner explaining why you want to join"
+    )
+    @require_perm(PermLevel.ADMIN)
+    async def fed_request(self, interaction: discord.Interaction, federation_id: str, message: str = None):
+        await interaction.response.defer(ephemeral=True)
+        fed = await self.bot.db.get_federation(federation_id)
+        if not fed:
+            await interaction.followup.send("❌ Federation not found.", ephemeral=True)
+            return
+        if not fed['is_public']:
+            await interaction.followup.send("❌ That federation is not accepting public requests.", ephemeral=True)
+            return
+        if fed['owner_server_id'] == interaction.guild_id:
+            await interaction.followup.send("❌ You own this federation.", ephemeral=True)
+            return
+        members = await self.bot.db.get_federation_members(federation_id)
+        if any(m['server_id'] == interaction.guild_id for m in members):
+            await interaction.followup.send("❌ Your server is already a member of this federation.", ephemeral=True)
+            return
+        req_id = str(uuid.uuid4())
+        success = await self.bot.db.create_join_request(
+            req_id, federation_id, interaction.guild_id, interaction.user.id, message
+        )
+        if not success:
+            await interaction.followup.send("❌ A join request from your server is already pending for this federation.", ephemeral=True)
+            return
+        # Notify the federation owner
+        owner_guild = self.bot.get_guild(fed['owner_server_id'])
+        if owner_guild:
+            server = await self.bot.db.get_server(fed['owner_server_id'])
+            notify_ch_id = server['admin_channel_id'] or server['audit_channel_id'] if server else None
+            if not notify_ch_id:
+                notify_ch = owner_guild.system_channel
+            else:
+                notify_ch = self.bot.get_channel(notify_ch_id)
+            if not notify_ch:
+                for ch in owner_guild.text_channels:
+                    if ch.permissions_for(owner_guild.me).send_messages:
+                        notify_ch = ch
+                        break
+            if notify_ch:
+                embed = discord.Embed(
+                    title="📬 Federation Join Request",
+                    description=f"**{interaction.guild.name}** has requested to join **{fed['name']}**.",
+                    color=0x5865F2,
+                )
+                if message:
+                    embed.add_field(name="Their Message", value=message[:500], inline=False)
+                embed.add_field(name="Request ID", value=f"`{req_id[:8]}`", inline=True)
+                embed.set_footer(text=f"Use /federation review to accept or decline. Full ID: {req_id}")
+                try:
+                    await notify_ch.send(embed=embed)
+                except Exception:
+                    pass
+        await interaction.followup.send(
+            f"✅ Join request sent to **{fed['name']}**. The federation owner will review your request.",
+            ephemeral=True,
+        )
+
+    @fed.command(name="review", description="Review and approve/decline pending join requests for your federation")
+    @app_commands.describe(
+        federation_id="Your federation ID",
+        request_id="Request ID to review (from the notification or /federation review list)",
+        action="Accept or decline the request"
+    )
+    @app_commands.choices(action=[
+        app_commands.Choice(name="accept", value="accept"),
+        app_commands.Choice(name="decline", value="decline"),
+    ])
+    @require_perm(PermLevel.OWNER)
+    async def fed_review(self, interaction: discord.Interaction, federation_id: str, action: str, request_id: str = None):
+        await interaction.response.defer(ephemeral=True)
+        fed = await self.bot.db.get_federation(federation_id)
+        if not fed or fed['owner_server_id'] != interaction.guild_id:
+            await interaction.followup.send("❌ Federation not found or you don't own it.", ephemeral=True)
+            return
+        if not request_id:
+            # Show pending requests list
+            requests = await self.bot.db.get_pending_join_requests(federation_id)
+            if not requests:
+                await interaction.followup.send("No pending join requests for this federation.", ephemeral=True)
+                return
+            embed = discord.Embed(title=f"📬 Pending Join Requests — {fed['name']}", color=0x5865F2)
+            for r in requests[:10]:
+                req_guild = self.bot.get_guild(r['requesting_server_id'])
+                embed.add_field(
+                    name=f"`{r['id'][:8]}` — {req_guild.name if req_guild else r['requesting_server_id']}",
+                    value=r['message'][:100] if r['message'] else 'No message',
+                    inline=False,
+                )
+            embed.set_footer(text="Run /federation review <fed_id> <accept|decline> <request_id> to respond.")
+            await interaction.followup.send(embed=embed, ephemeral=True)
+            return
+        # Find the matching request (allow short ID prefix)
+        requests = await self.bot.db.get_pending_join_requests(federation_id)
+        req = next((r for r in requests if r['id'].startswith(request_id) or r['id'] == request_id), None)
+        if not req:
+            await interaction.followup.send("❌ Request not found or already handled.", ephemeral=True)
+            return
+        await self.bot.db.update_join_request(req['id'], action + 'd')
+        req_guild = self.bot.get_guild(req['requesting_server_id'])
+        if action == 'accept':
+            mem_id = str(uuid.uuid4())
+            await self.bot.db.invite_to_federation(mem_id, federation_id, req['requesting_server_id'], interaction.user.id)
+            await self.bot.db.update_federation_status(federation_id, req['requesting_server_id'], 'active', interaction.user.id)
+            await interaction.followup.send(
+                f"✅ **{req_guild.name if req_guild else 'Server'}** has been added to **{fed['name']}**.",
+                ephemeral=True,
+            )
+            # Notify the requesting server
+            if req_guild:
+                notify_ch = req_guild.system_channel
+                if not notify_ch:
+                    for ch in req_guild.text_channels:
+                        if ch.permissions_for(req_guild.me).send_messages:
+                            notify_ch = ch
+                            break
+                if notify_ch:
+                    try:
+                        await notify_ch.send(embed=discord.Embed(
+                            title="🏛️ Federation Request Accepted!",
+                            description=f"Your request to join **{fed['name']}** was accepted! You are now a member.",
+                            color=0x57F287,
+                        ))
+                    except Exception:
+                        pass
+        else:
+            await interaction.followup.send(
+                f"✅ Request from **{req_guild.name if req_guild else 'Server'}** declined.",
+                ephemeral=True,
+            )
+
     @fed.command(name="transfer", description="Transfer federation ownership to another server (owner only)")
     @app_commands.describe(federation_id="Federation ID", server_id="Server ID of the new owner")
     @require_perm(PermLevel.OWNER)

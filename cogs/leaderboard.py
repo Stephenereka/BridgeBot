@@ -103,6 +103,28 @@ class LeaderboardCog(commands.Cog, name="Leaderboard"):
 
         await interaction.followup.send(embed=embed)
 
+    @lb.command(name="reputation", description="Top 10 servers by reputation score")
+    async def lb_reputation(self, interaction: discord.Interaction):
+        await interaction.response.defer()
+        rows = await self.bot.db.leaderboard_reputation()
+        embed = discord.Embed(
+            title="⭐ Top 10 — Server Reputation",
+            description="Servers ranked by reputation score (based on bridges, messages, federations, and longevity).",
+            color=0x5865F2,
+        )
+        if not rows:
+            embed.description = "No reputation scores yet — scores update daily!"
+        else:
+            lines = []
+            for i, row in enumerate(rows[:10]):
+                guild = self.bot.get_guild(row['id'])
+                name = guild.name if guild else row['name']
+                badge = self.bot.db.get_reputation_badge(row['reputation_score'])
+                lines.append(f"{MEDALS[i]} **{name}** — {badge} `{row['reputation_score']:.0f} pts`")
+            embed.description = "\n".join(lines)
+        embed.set_footer(text="Scores update daily. Earn points through active bridges, messages, and federations.")
+        await interaction.followup.send(embed=embed)
+
     @lb.command(name="server", description="See how this server ranks on the global leaderboard")
     async def lb_server(self, interaction: discord.Interaction):
         await interaction.response.defer(ephemeral=True)
@@ -112,6 +134,10 @@ class LeaderboardCog(commands.Cog, name="Leaderboard"):
         bridge_count = await self.bot.db.server_bridge_count(interaction.guild_id)
         msg_count = await self.bot.db.server_message_count(interaction.guild_id)
         fed_count = len(await self.bot.db.get_federations_for_server(interaction.guild_id))
+        server_data = await self.bot.db.get_server(interaction.guild_id)
+        rep_score = server_data['reputation_score'] if server_data else 0
+        rep_badge = self.bot.db.get_reputation_badge(rep_score)
+        rep_rank = await self.bot.db.get_server_reputation_rank(interaction.guild_id)
 
         embed = discord.Embed(
             title=f"📊 {interaction.guild.name} — Global Rank",
@@ -130,6 +156,11 @@ class LeaderboardCog(commands.Cog, name="Leaderboard"):
         embed.add_field(
             name="🏛️ Federations",
             value=f"Member of `{fed_count}` federation(s)",
+            inline=True,
+        )
+        embed.add_field(
+            name="⭐ Reputation",
+            value=f"{rep_badge}\n`{rep_score:.0f} pts` — Rank **#{rep_rank}** globally",
             inline=True,
         )
         embed.set_footer(text="Use /bridge create to climb the leaderboard!")

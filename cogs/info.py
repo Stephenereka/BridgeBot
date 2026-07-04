@@ -25,13 +25,19 @@ class InfoCog(commands.Cog, name="Info"):
         h, m = divmod(uptime_s // 60, 60)
         uptime_str = f"{h}h {m}m"
 
-        embed = discord.Embed(title="📊 BridgeBot Stats", color=0x5865F2)
-        embed.add_field(name="Servers", value=f"`{s['servers']:,}`", inline=True)
-        embed.add_field(name="Active Bridges", value=f"`{s['bridges']:,}`", inline=True)
-        embed.add_field(name="Messages Relayed", value=f"`{s['messages_relayed']:,}`", inline=True)
-        embed.add_field(name="Federations", value=f"`{s['federations']:,}`", inline=True)
-        embed.add_field(name="Uptime", value=f"`{uptime_str}`", inline=True)
-        embed.add_field(name="Latency", value=f"`{round(self.bot.latency * 1000)}ms`", inline=True)
+        embed = discord.Embed(
+            title="📊 BridgeBot Stats",
+            description=f"Global statistics across all servers using BridgeBot.",
+            color=0x5865F2,
+        )
+        embed.add_field(name="🌍 Connected Servers", value=f"`{s['servers']:,}`", inline=True)
+        embed.add_field(name="✅ Active Servers", value=f"`{s.get('active_servers', 0):,}`", inline=True)
+        embed.add_field(name="🌉 Active Bridges", value=f"`{s['bridges']:,}`", inline=True)
+        embed.add_field(name="💬 Messages Relayed", value=f"`{s['messages_relayed']:,}`", inline=True)
+        embed.add_field(name="🏛️ Federations", value=f"`{s['federations']:,}`", inline=True)
+        embed.add_field(name="⭐ Reputation Score", value=f"`{s.get('total_reputation', 0):,.0f}` pts", inline=True)
+        embed.add_field(name="⏱️ Uptime", value=f"`{uptime_str}`", inline=True)
+        embed.add_field(name="📶 Latency", value=f"`{round(self.bot.latency * 1000)}ms`", inline=True)
         await interaction.followup.send(embed=embed, ephemeral=True)
 
     @app_commands.command(name="bridges", description="List all active bridges on this server")
@@ -93,12 +99,21 @@ class InfoCog(commands.Cog, name="Info"):
             name="🌉 Bridge Commands",
             value=(
                 "`/bridge create` — Request a channel bridge\n"
-                "`/bridge list` — List all server bridges\n"
+                "`/bridge forum` — Bridge two forum channels\n"
+                "`/bridge list` — List all your bridges\n"
                 "`/bridge delete` — Remove a bridge\n"
-                "`/bridge pause` — Pause a bridge\n"
-                "`/bridge resume` — Resume a bridge\n"
+                "`/bridge pause` / `resume` — Pause or resume a bridge\n"
                 "`/bridge toggle` — Toggle relay settings\n"
-                "`/bridge stats` — View bridge stats"
+                "`/bridge repair` — Fix broken webhooks\n"
+                "`/bridge analytics` — Message stats (7d / 30d / all-time)\n"
+                "`/bridge setname` — Custom display name for relay\n"
+                "`/bridge setavatar` — Custom avatar for relay\n"
+                "`/bridge setping` — Control how mentions are handled\n"
+                "`/bridge setlinks` — Control link filtering\n"
+                "`/bridge setpurpose` — Label what a bridge is for\n"
+                "`/bridge scheduleset` — Auto-pause during certain hours\n"
+                "`/bridge scheduleclear` — Remove schedule\n"
+                "`/bridge suggest` — Suggest a bridge (any member)"
             ),
             inline=False,
         )
@@ -107,14 +122,26 @@ class InfoCog(commands.Cog, name="Info"):
             value=(
                 "`/federation create` — Create a federation\n"
                 "`/federation invite` — Invite a server\n"
-                "`/federation accept` — Accept an invite\n"
-                "`/federation decline` — Decline an invite\n"
+                "`/federation accept` / `decline` — Respond to invites\n"
                 "`/federation leave` — Leave a federation\n"
-                "`/federation list` — Your federations\n"
-                "`/federation info` — Federation details\n"
-                "`/federation members` — Member servers\n"
-                "`/federation delete` — Delete (owner only)\n"
-                "`/federation kick` — Remove a server (owner only)"
+                "`/federation list` / `info` / `members` — View federations\n"
+                "`/federation publish` — List in the public directory\n"
+                "`/federation discover` — Browse public federations\n"
+                "`/federation request` — Request to join a public federation\n"
+                "`/federation review` — Approve/decline join requests\n"
+                "`/federation delete` / `kick` / `transfer` — Manage (owner)"
+            ),
+            inline=False,
+        )
+        embed.add_field(
+            name="📊 Polls, Hub & Templates",
+            value=(
+                "`/poll create` — Cross-server federation poll\n"
+                "`/poll end` / `results` / `list` — Manage polls\n"
+                "`/hub set` — Set federation hub channel\n"
+                "`/hub broadcast` — Announce to all federation servers\n"
+                "`/hub target` — Set where broadcasts go for your server\n"
+                "`/template save` / `load` / `list` / `share` — Bridge templates"
             ),
             inline=False,
         )
@@ -122,25 +149,33 @@ class InfoCog(commands.Cog, name="Info"):
             name="⚙️ Setup & Config",
             value=(
                 "`/setup` — First-time setup wizard\n"
-                "`/config view` — View server config\n"
-                "`/config set` — Change a config value\n"
-                "`/blacklist add/remove/list` — Manage server blacklist\n"
-                "`/rolesync add/remove/list/toggle` — Role sync mappings"
+                "`/config view` / `set` — Server configuration\n"
+                "`/blacklist add/remove/list` — Block servers\n"
+                "`/rolesync add/remove/list/toggle` — Cross-server role sync\n"
+                "`/bridgealert` — Set webhook alert channel\n"
+                "`/export` — Export config as JSON\n"
+                "`/config import` — Restore config from JSON\n"
+                "`/digest on/off` — Weekly stats digest\n"
+                "`/webhook rotate` — Rotate webhook URLs"
             ),
             inline=False,
         )
         embed.add_field(
-            name="📊 Info Commands",
+            name="🏆 Leaderboards & Info",
             value=(
-                "`/ping` — Bot latency\n"
-                "`/stats` — Global statistics\n"
-                "`/bridges` — Bridges on this server\n"
-                "`/status` — Bridge health check\n"
-                "`/help` — This menu"
+                "`/leaderboard bridges` — Most bridges globally\n"
+                "`/leaderboard messages` — Most messages relayed\n"
+                "`/leaderboard federations` — Largest federations\n"
+                "`/leaderboard activity` — Most active bridges\n"
+                "`/leaderboard reputation` — Server reputation scores\n"
+                "`/leaderboard server` — Your server's rank\n"
+                "`/referrals link` / `credit` / `stats` — Referral tracking\n"
+                "`/banrelay enable/disable/status` — Ban relay across feds\n"
+                "`/ping` / `/stats` / `/bridges` / `/status` / `/report`"
             ),
             inline=False,
         )
-        embed.set_footer(text="Permission levels: Member < Mod (Manage Messages) < Admin (Manage Server) < Owner")
+        embed.set_footer(text="Permissions: Member < Mod (Manage Messages) < Admin (Manage Server) < Owner")
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
     @app_commands.command(name="report", description="Report a user from a bridged server")

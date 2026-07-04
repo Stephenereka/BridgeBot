@@ -373,13 +373,13 @@ class BridgeCog(commands.Cog, name="Bridge"):
         await interaction.followup.send(embed=embed, ephemeral=True)
 
 
-    @bridge.command(name="analytics", description="View message relay stats for your bridges")
-    @app_commands.describe(bridge_id="Specific bridge ID (optional — shows all if omitted)")
+    @bridge.command(name="analytics", description="View detailed message relay stats for a bridge")
+    @app_commands.describe(bridge_id="Specific bridge ID (shows all bridges if omitted)")
     @require_perm(PermLevel.MOD)
     async def bridge_analytics(self, interaction: discord.Interaction, bridge_id: str = None):
         await interaction.response.defer(ephemeral=True)
         if bridge_id:
-            bridge = await self.bot.db.get_bridge(bridge_id)
+            bridge = await self.bot.db.get_bridge_analytics_detailed(bridge_id)
             if not bridge:
                 await interaction.followup.send("❌ Bridge not found.", ephemeral=True)
                 return
@@ -388,14 +388,20 @@ class BridgeCog(commands.Cog, name="Bridge"):
                 return
             embed = discord.Embed(title=f"📊 Bridge Analytics — `{bridge_id[:8]}`", color=0x5865F2)
             embed.add_field(name="Channels", value=f"<#{bridge['channel_a_id']}> ↔ <#{bridge['channel_b_id']}>", inline=False)
-            embed.add_field(name="Total Messages Relayed", value=f"{bridge['total_messages'] or 0:,}", inline=True)
-            embed.add_field(name="Status", value="Active" if bridge['active'] and not bridge['paused'] else "Paused", inline=True)
-            if bridge.get('last_message_at'):
-                embed.add_field(name="Last Activity", value=str(bridge['last_message_at']), inline=True)
+            status = "✅ Active" if bridge['active'] and not bridge['paused'] else "⏸️ Paused"
+            embed.add_field(name="Status", value=status, inline=True)
+            embed.add_field(name="Last 7 Days", value=f"{bridge.get('messages_7d', 0):,} msgs", inline=True)
+            embed.add_field(name="Last 30 Days", value=f"{bridge.get('messages_30d', 0):,} msgs", inline=True)
+            embed.add_field(name="All-Time Total", value=f"{bridge.get('total_messages') or 0:,} msgs", inline=True)
             embed.add_field(name="Ping Mode", value=(bridge.get('ping_mode') or 'none').title(), inline=True)
             embed.add_field(name="Link Mode", value=(bridge.get('link_mode') or 'all').title(), inline=True)
+            if bridge.get('webhook_display_name'):
+                embed.add_field(name="Custom Name", value=bridge['webhook_display_name'], inline=True)
             if bridge.get('purpose'):
                 embed.add_field(name="Purpose", value=bridge['purpose'], inline=False)
+            if bridge.get('last_message_at'):
+                embed.add_field(name="Last Message", value=str(bridge['last_message_at'])[:16], inline=True)
+            embed.add_field(name="Created", value=str(bridge.get('created_at', ''))[:16], inline=True)
             await interaction.followup.send(embed=embed, ephemeral=True)
         else:
             bridges = await self.bot.db.get_bridges_for_server(interaction.guild_id)
@@ -407,7 +413,7 @@ class BridgeCog(commands.Cog, name="Bridge"):
                 status = "✅" if b['active'] and not b['paused'] else "⏸️"
                 embed.add_field(
                     name=f"{status} `{b['id'][:8]}`",
-                    value=f"<#{b['channel_a_id']}> ↔ <#{b['channel_b_id']}>\n{b['total_messages'] or 0:,} msgs",
+                    value=f"<#{b['channel_a_id']}> ↔ <#{b['channel_b_id']}>\n{b.get('total_messages') or 0:,} msgs total",
                     inline=False,
                 )
             await interaction.followup.send(embed=embed, ephemeral=True)
@@ -479,6 +485,218 @@ class BridgeCog(commands.Cog, name="Bridge"):
             return
         await self.bot.db.update_bridge_column(bridge_id, 'purpose', purpose)
         await interaction.followup.send(f"✅ Purpose for bridge `{bridge_id[:8]}` updated.", ephemeral=True)
+
+    @bridge.command(name="setname", description="Set a custom display name for relayed messages on this bridge")
+    @app_commands.describe(bridge_id="Bridge ID from /bridge list", name="Custom name (leave empty to reset to default)")
+    @require_perm(PermLevel.ADMIN)
+    async def bridge_setname(self, interaction: discord.Interaction, bridge_id: str, name: str = None):
+        await interaction.response.defer(ephemeral=True)
+        bridge = await self.bot.db.get_bridge(bridge_id)
+        if not bridge:
+            await interaction.followup.send("❌ Bridge not found.", ephemeral=True)
+            return
+        if bridge['channel_a_server_id'] != interaction.guild_id and bridge['channel_b_server_id'] != interaction.guild_id:
+            await interaction.followup.send("❌ That bridge is not connected to your server.", ephemeral=True)
+            return
+        if name and len(name) > 80:
+            await interaction.followup.send("❌ Name must be 80 characters or fewer.", ephemeral=True)
+            return
+        await self.bot.db.update_bridge_column(bridge_id, 'webhook_display_name', name)
+        self.bot.relay.invalidate_bridge_cache()
+        if name:
+            await interaction.followup.send(f"✅ Relayed messages on bridge `{bridge_id[:8]}` will now show as **{name}**.", ephemeral=True)
+        else:
+            await interaction.followup.send(f"✅ Custom name cleared. Bridge `{bridge_id[:8]}` will use default display names.", ephemeral=True)
+        await send_audit_log(self.bot, interaction.guild_id, interaction.user, 'bridge_setname', {'bridge_id': bridge_id, 'name': name})
+
+    @bridge.command(name="setavatar", description="Set a custom avatar for relayed messages on this bridge")
+    @app_commands.describe(bridge_id="Bridge ID from /bridge list", url="Image URL (leave empty to reset to default)")
+    @require_perm(PermLevel.ADMIN)
+    async def bridge_setavatar(self, interaction: discord.Interaction, bridge_id: str, url: str = None):
+        await interaction.response.defer(ephemeral=True)
+        bridge = await self.bot.db.get_bridge(bridge_id)
+        if not bridge:
+            await interaction.followup.send("❌ Bridge not found.", ephemeral=True)
+            return
+        if bridge['channel_a_server_id'] != interaction.guild_id and bridge['channel_b_server_id'] != interaction.guild_id:
+            await interaction.followup.send("❌ That bridge is not connected to your server.", ephemeral=True)
+            return
+        if url and not (url.startswith('http://') or url.startswith('https://')):
+            await interaction.followup.send("❌ Please provide a valid image URL starting with http:// or https://", ephemeral=True)
+            return
+        await self.bot.db.update_bridge_column(bridge_id, 'webhook_avatar_url', url)
+        self.bot.relay.invalidate_bridge_cache()
+        if url:
+            await interaction.followup.send(f"✅ Custom avatar set for bridge `{bridge_id[:8]}`.", ephemeral=True)
+        else:
+            await interaction.followup.send(f"✅ Custom avatar cleared for bridge `{bridge_id[:8]}`.", ephemeral=True)
+        await send_audit_log(self.bot, interaction.guild_id, interaction.user, 'bridge_setavatar', {'bridge_id': bridge_id})
+
+    @bridge.command(name="forum", description="Bridge a forum channel with a forum channel in another server")
+    @app_commands.describe(
+        local_forum="Your forum channel",
+        target_server_id="Target server ID",
+        target_forum_id="Target forum channel ID in the other server"
+    )
+    @require_perm(PermLevel.ADMIN)
+    async def bridge_forum(self, interaction: discord.Interaction, local_forum: discord.ForumChannel,
+                           target_server_id: str, target_forum_id: str):
+        await interaction.response.defer(ephemeral=True)
+        try:
+            t_sv = int(target_server_id)
+            t_ch = int(target_forum_id)
+        except ValueError:
+            await interaction.followup.send("❌ Invalid server or channel ID.", ephemeral=True)
+            return
+        target_guild = self.bot.get_guild(t_sv)
+        if not target_guild:
+            await interaction.followup.send("❌ I'm not in that server.", ephemeral=True)
+            return
+        target_forum = self.bot.get_channel(t_ch)
+        if not target_forum or not isinstance(target_forum, discord.ForumChannel):
+            await interaction.followup.send("❌ Target channel not found or is not a forum channel.", ephemeral=True)
+            return
+        if await self.bot.db.is_blacklisted(interaction.guild_id, t_sv):
+            await interaction.followup.send("❌ Your server has blacklisted that server (or vice versa).", ephemeral=True)
+            return
+        bridge_id = str(uuid.uuid4())
+        await self.bot.db.create_bridge(
+            bridge_id=bridge_id,
+            channel_a_id=local_forum.id,
+            server_a_id=interaction.guild_id,
+            channel_b_id=t_ch,
+            server_b_id=t_sv,
+            created_by=interaction.user.id,
+        )
+        await self.bot.db.update_bridge_column(bridge_id, 'channel_type', 'forum')
+        self.bot.relay.invalidate_bridge_cache()
+        embed = discord.Embed(
+            title="📁 Forum Bridge Created",
+            description=(
+                f"Forum posts created in **{local_forum.name}** will be automatically mirrored to "
+                f"**{target_forum.name}** in **{target_guild.name}**, and vice versa."
+            ),
+            color=0x57F287,
+        )
+        embed.add_field(name="Bridge ID", value=f"`{bridge_id[:8]}`", inline=False)
+        embed.set_footer(text="New forum posts will be bridged automatically. Existing posts are not affected.")
+        await interaction.followup.send(embed=embed, ephemeral=True)
+        await send_audit_log(self.bot, interaction.guild_id, interaction.user, 'forum_bridge_created', {
+            'bridge_id': bridge_id[:8], 'local_forum': local_forum.name, 'target_guild': target_guild.name,
+        })
+
+    @bridge.command(name="scheduleset", description="Auto-pause a bridge during certain hours each day")
+    @app_commands.describe(
+        bridge_id="Bridge ID",
+        pause_hour="UTC hour to pause (0-23)",
+        resume_hour="UTC hour to resume (0-23)",
+        days="Days to apply schedule: comma-separated 0-6 (0=Mon, 6=Sun). Leave empty for all days."
+    )
+    @require_perm(PermLevel.ADMIN)
+    async def bridge_scheduleset(self, interaction: discord.Interaction, bridge_id: str,
+                                  pause_hour: int, resume_hour: int, days: str = None):
+        await interaction.response.defer(ephemeral=True)
+        if not (0 <= pause_hour <= 23 and 0 <= resume_hour <= 23):
+            await interaction.followup.send("❌ Hours must be between 0 and 23 (UTC).", ephemeral=True)
+            return
+        if pause_hour == resume_hour:
+            await interaction.followup.send("❌ Pause and resume hours cannot be the same.", ephemeral=True)
+            return
+        bridge = await self.bot.db.get_bridge(bridge_id)
+        if not bridge:
+            await interaction.followup.send("❌ Bridge not found.", ephemeral=True)
+            return
+        if bridge['channel_a_server_id'] != interaction.guild_id and bridge['channel_b_server_id'] != interaction.guild_id:
+            await interaction.followup.send("❌ That bridge is not connected to your server.", ephemeral=True)
+            return
+        if days:
+            try:
+                day_nums = [int(d.strip()) for d in days.split(',')]
+                if any(d < 0 or d > 6 for d in day_nums):
+                    raise ValueError
+                days_clean = ','.join(str(d) for d in day_nums)
+            except ValueError:
+                await interaction.followup.send("❌ Days must be comma-separated numbers 0-6 (0=Mon, 6=Sun).", ephemeral=True)
+                return
+        else:
+            days_clean = None
+        await self.bot.db.update_bridge_column(bridge_id, 'schedule_pause_hour', pause_hour)
+        await self.bot.db.update_bridge_column(bridge_id, 'schedule_resume_hour', resume_hour)
+        await self.bot.db.update_bridge_column(bridge_id, 'schedule_days', days_clean)
+        self.bot.relay.invalidate_bridge_cache()
+        days_str = f" on days {days_clean}" if days_clean else " daily"
+        await interaction.followup.send(
+            f"✅ Bridge `{bridge_id[:8]}` will auto-pause at **{pause_hour:02d}:00 UTC** "
+            f"and resume at **{resume_hour:02d}:00 UTC**{days_str}.",
+            ephemeral=True,
+        )
+        await send_audit_log(self.bot, interaction.guild_id, interaction.user, 'bridge_schedule_set', {
+            'bridge_id': bridge_id, 'pause_hour': pause_hour, 'resume_hour': resume_hour, 'days': days_clean,
+        })
+
+    @bridge.command(name="scheduleclear", description="Remove the schedule from a bridge (always on)")
+    @app_commands.describe(bridge_id="Bridge ID to remove schedule from")
+    @require_perm(PermLevel.ADMIN)
+    async def bridge_scheduleclear(self, interaction: discord.Interaction, bridge_id: str):
+        await interaction.response.defer(ephemeral=True)
+        bridge = await self.bot.db.get_bridge(bridge_id)
+        if not bridge:
+            await interaction.followup.send("❌ Bridge not found.", ephemeral=True)
+            return
+        await self.bot.db.update_bridge_column(bridge_id, 'schedule_pause_hour', None)
+        await self.bot.db.update_bridge_column(bridge_id, 'schedule_resume_hour', None)
+        await self.bot.db.update_bridge_column(bridge_id, 'schedule_days', None)
+        await self.bot.db.update_bridge_column(bridge_id, 'schedule_paused', 0)
+        self.bot.relay.invalidate_bridge_cache()
+        await interaction.followup.send(f"✅ Schedule cleared for bridge `{bridge_id[:8]}`. Bridge is now always active.", ephemeral=True)
+
+    @bridge.command(name="suggest", description="Suggest that your server bridges with another server")
+    @app_commands.describe(
+        server_id="ID of the server you want to bridge with",
+        message="Why should your server bridge with them? (optional)"
+    )
+    async def bridge_suggest(self, interaction: discord.Interaction, server_id: str, message: str = None):
+        await interaction.response.defer(ephemeral=True)
+        try:
+            t_sv_id = int(server_id)
+        except ValueError:
+            await interaction.followup.send("❌ Invalid server ID.", ephemeral=True)
+            return
+        if t_sv_id == interaction.guild_id:
+            await interaction.followup.send("❌ You can't suggest bridging with your own server.", ephemeral=True)
+            return
+        target_guild = self.bot.get_guild(t_sv_id)
+        sugg_id = str(uuid.uuid4())
+        await self.bot.db.create_bridge_suggestion(
+            sugg_id, interaction.guild_id, interaction.user.id, t_sv_id, message
+        )
+        server = await self.bot.db.get_server(interaction.guild_id)
+        notify_ch_id = server['admin_channel_id'] or server['audit_channel_id'] if server else None
+        notify_ch = self.bot.get_channel(notify_ch_id) if notify_ch_id else interaction.channel
+        if notify_ch:
+            target_name = target_guild.name if target_guild else f"Server `{server_id}`"
+            embed = discord.Embed(
+                title="💡 Bridge Suggestion",
+                description=f"**{interaction.user}** suggests bridging with **{target_name}**.",
+                color=0x5865F2,
+            )
+            if message:
+                embed.add_field(name="Their Reason", value=message[:500], inline=False)
+            embed.add_field(
+                name="How to Act on This",
+                value=f"If you agree, use `/bridge create` to send a bridge request to them.\nTarget server ID: `{server_id}`",
+                inline=False,
+            )
+            embed.set_footer(text=f"Suggested by {interaction.user} | {interaction.user.id}")
+            try:
+                await notify_ch.send(embed=embed)
+            except Exception:
+                pass
+        await interaction.followup.send(
+            f"✅ Your suggestion has been forwarded to **your server's admins**. "
+            f"They can review it and decide whether to create a bridge.",
+            ephemeral=True,
+        )
 
     @bridge.command(name="repair", description="Recreate broken webhooks for a bridge")
     @app_commands.describe(bridge_id="Bridge ID from /bridge list")

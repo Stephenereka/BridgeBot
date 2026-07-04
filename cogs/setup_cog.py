@@ -1,6 +1,7 @@
 import discord
 from discord import app_commands
 from discord.ext import commands
+import json
 import uuid
 from core.permissions import require_perm, PermLevel, send_audit_log
 
@@ -94,6 +95,30 @@ class SetupCog(commands.Cog, name="Setup"):
         await send_audit_log(self.bot, interaction.guild_id, interaction.user, 'config_update', {
             'key': key, 'new_value': int_val,
         })
+
+    @config_group.command(name="import", description="Restore server config from a JSON export file")
+    @app_commands.describe(file="The JSON export file from /export")
+    @require_perm(PermLevel.OWNER)
+    async def config_import(self, interaction: discord.Interaction, file: discord.Attachment):
+        await interaction.response.defer(ephemeral=True)
+        if not file.filename.endswith('.json'):
+            await interaction.followup.send("❌ Please upload a `.json` file exported from `/export`.", ephemeral=True)
+            return
+        try:
+            data = json.loads(await file.read())
+        except (json.JSONDecodeError, Exception):
+            await interaction.followup.send("❌ Invalid JSON file.", ephemeral=True)
+            return
+        result = await self.bot.db.restore_server_config(interaction.guild_id, data)
+        if result:
+            await interaction.followup.send(
+                f"✅ Config imported successfully.\n"
+                f"Settings restored: rolesync, blacklist, server config.\n"
+                f"Bridge webhooks were **not** restored for security — you may need to run `/webhook rotate`.",
+                ephemeral=True,
+            )
+        else:
+            await interaction.followup.send("❌ Failed to import config.", ephemeral=True)
 
     blacklist_group = app_commands.Group(name="blacklist", description="Manage your server blacklist")
 
