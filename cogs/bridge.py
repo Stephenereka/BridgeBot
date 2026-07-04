@@ -288,6 +288,7 @@ class BridgeCog(commands.Cog, name="Bridge"):
             await self.bot.webhook_manager.delete_webhook_by_url(bridge['webhook_b_url'])
 
         await self.bot.db.delete_bridge(bridge_id)
+        self.bot.relay.invalidate_bridge_cache()
         await interaction.followup.send(f"✅ Bridge `{bridge_id}` removed.", ephemeral=True)
         await send_audit_log(self.bot, interaction.guild_id, interaction.user, 'bridge_deleted', {'bridge_id': bridge_id})
 
