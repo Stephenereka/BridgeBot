@@ -373,6 +373,113 @@ class BridgeCog(commands.Cog, name="Bridge"):
         await interaction.followup.send(embed=embed, ephemeral=True)
 
 
+    @bridge.command(name="analytics", description="View message relay stats for your bridges")
+    @app_commands.describe(bridge_id="Specific bridge ID (optional — shows all if omitted)")
+    @require_perm(PermLevel.MOD)
+    async def bridge_analytics(self, interaction: discord.Interaction, bridge_id: str = None):
+        await interaction.response.defer(ephemeral=True)
+        if bridge_id:
+            bridge = await self.bot.db.get_bridge(bridge_id)
+            if not bridge:
+                await interaction.followup.send("❌ Bridge not found.", ephemeral=True)
+                return
+            if bridge['channel_a_server_id'] != interaction.guild_id and bridge['channel_b_server_id'] != interaction.guild_id:
+                await interaction.followup.send("❌ That bridge is not connected to your server.", ephemeral=True)
+                return
+            embed = discord.Embed(title=f"📊 Bridge Analytics — `{bridge_id[:8]}`", color=0x5865F2)
+            embed.add_field(name="Channels", value=f"<#{bridge['channel_a_id']}> ↔ <#{bridge['channel_b_id']}>", inline=False)
+            embed.add_field(name="Total Messages Relayed", value=f"{bridge['total_messages'] or 0:,}", inline=True)
+            embed.add_field(name="Status", value="Active" if bridge['active'] and not bridge['paused'] else "Paused", inline=True)
+            if bridge.get('last_message_at'):
+                embed.add_field(name="Last Activity", value=str(bridge['last_message_at']), inline=True)
+            embed.add_field(name="Ping Mode", value=(bridge.get('ping_mode') or 'none').title(), inline=True)
+            embed.add_field(name="Link Mode", value=(bridge.get('link_mode') or 'all').title(), inline=True)
+            if bridge.get('purpose'):
+                embed.add_field(name="Purpose", value=bridge['purpose'], inline=False)
+            await interaction.followup.send(embed=embed, ephemeral=True)
+        else:
+            bridges = await self.bot.db.get_bridges_for_server(interaction.guild_id)
+            if not bridges:
+                await interaction.followup.send("No bridges found for this server.", ephemeral=True)
+                return
+            embed = discord.Embed(title="📊 Bridge Analytics — All Bridges", color=0x5865F2)
+            for b in bridges[:10]:
+                status = "✅" if b['active'] and not b['paused'] else "⏸️"
+                embed.add_field(
+                    name=f"{status} `{b['id'][:8]}`",
+                    value=f"<#{b['channel_a_id']}> ↔ <#{b['channel_b_id']}>\n{b['total_messages'] or 0:,} msgs",
+                    inline=False,
+                )
+            await interaction.followup.send(embed=embed, ephemeral=True)
+
+    @bridge.command(name="setping", description="Set how mentions are handled for a bridge")
+    @app_commands.describe(
+        bridge_id="Bridge ID from /bridge list",
+        mode="none=strip mentions, role=allow role pings, all=allow everything"
+    )
+    @app_commands.choices(mode=[
+        app_commands.Choice(name="none — strip all mentions (default, safest)", value="none"),
+        app_commands.Choice(name="role — allow role pings but block @everyone", value="role"),
+        app_commands.Choice(name="all — allow all mentions (trusted bridges only)", value="all"),
+    ])
+    @require_perm(PermLevel.ADMIN)
+    async def bridge_setping(self, interaction: discord.Interaction, bridge_id: str, mode: str):
+        await interaction.response.defer(ephemeral=True)
+        bridge = await self.bot.db.get_bridge(bridge_id)
+        if not bridge:
+            await interaction.followup.send("❌ Bridge not found.", ephemeral=True)
+            return
+        if bridge['channel_a_server_id'] != interaction.guild_id and bridge['channel_b_server_id'] != interaction.guild_id:
+            await interaction.followup.send("❌ That bridge is not connected to your server.", ephemeral=True)
+            return
+        await self.bot.db.update_bridge_column(bridge_id, 'ping_mode', mode)
+        self.bot.relay.invalidate_bridge_cache()
+        await interaction.followup.send(f"✅ Ping mode for bridge `{bridge_id[:8]}` set to **{mode}**.", ephemeral=True)
+        await send_audit_log(self.bot, interaction.guild_id, interaction.user, 'bridge_setping', {'bridge_id': bridge_id, 'mode': mode})
+
+    @bridge.command(name="setlinks", description="Set how links are handled for a bridge")
+    @app_commands.describe(
+        bridge_id="Bridge ID from /bridge list",
+        mode="safe=known sites only, warn=flag unknowns, all=allow everything"
+    )
+    @app_commands.choices(mode=[
+        app_commands.Choice(name="safe — only YouTube, Discord CDN, and known safe sites", value="safe"),
+        app_commands.Choice(name="warn — allow all links but flag unknown ones with ⚠️", value="warn"),
+        app_commands.Choice(name="all — allow all links (default)", value="all"),
+    ])
+    @require_perm(PermLevel.ADMIN)
+    async def bridge_setlinks(self, interaction: discord.Interaction, bridge_id: str, mode: str):
+        await interaction.response.defer(ephemeral=True)
+        bridge = await self.bot.db.get_bridge(bridge_id)
+        if not bridge:
+            await interaction.followup.send("❌ Bridge not found.", ephemeral=True)
+            return
+        if bridge['channel_a_server_id'] != interaction.guild_id and bridge['channel_b_server_id'] != interaction.guild_id:
+            await interaction.followup.send("❌ That bridge is not connected to your server.", ephemeral=True)
+            return
+        await self.bot.db.update_bridge_column(bridge_id, 'link_mode', mode)
+        self.bot.relay.invalidate_bridge_cache()
+        await interaction.followup.send(f"✅ Link mode for bridge `{bridge_id[:8]}` set to **{mode}**.", ephemeral=True)
+        await send_audit_log(self.bot, interaction.guild_id, interaction.user, 'bridge_setlinks', {'bridge_id': bridge_id, 'mode': mode})
+
+    @bridge.command(name="setpurpose", description="Set a description/purpose for a bridge (shown in analytics)")
+    @app_commands.describe(bridge_id="Bridge ID", purpose="What this bridge is for (max 200 chars)")
+    @require_perm(PermLevel.ADMIN)
+    async def bridge_setpurpose(self, interaction: discord.Interaction, bridge_id: str, purpose: str):
+        await interaction.response.defer(ephemeral=True)
+        if len(purpose) > 200:
+            await interaction.followup.send("❌ Purpose must be 200 characters or fewer.", ephemeral=True)
+            return
+        bridge = await self.bot.db.get_bridge(bridge_id)
+        if not bridge:
+            await interaction.followup.send("❌ Bridge not found.", ephemeral=True)
+            return
+        if bridge['channel_a_server_id'] != interaction.guild_id and bridge['channel_b_server_id'] != interaction.guild_id:
+            await interaction.followup.send("❌ That bridge is not connected to your server.", ephemeral=True)
+            return
+        await self.bot.db.update_bridge_column(bridge_id, 'purpose', purpose)
+        await interaction.followup.send(f"✅ Purpose for bridge `{bridge_id[:8]}` updated.", ephemeral=True)
+
     @bridge.command(name="repair", description="Recreate broken webhooks for a bridge")
     @app_commands.describe(bridge_id="Bridge ID from /bridge list")
     @require_perm(PermLevel.ADMIN)

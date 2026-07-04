@@ -38,6 +38,7 @@ class WebhookManager:
         username: str,
         avatar_url: str,
         embeds: list = None,
+        thread_id: int = None,
     ) -> Optional[int]:
         safe = (
             content
@@ -47,8 +48,12 @@ class WebhookManager:
         if len(safe) > 1997:
             safe = safe[:1997] + '...'
 
+        url = webhook_url
+        if thread_id:
+            url = f"{webhook_url}?thread_id={thread_id}"
+
         async with aiohttp.ClientSession() as session:
-            wh = discord.Webhook.from_url(webhook_url, session=session)
+            wh = discord.Webhook.from_url(url, session=session)
             try:
                 msg = await wh.send(
                     content=safe or None,
@@ -64,7 +69,7 @@ class WebhookManager:
                 if e.status == 429:
                     retry_after = float(getattr(e.response, 'headers', {}).get('Retry-After', 1))
                     await asyncio.sleep(retry_after)
-                    return await self.send_message(webhook_url, content, username, avatar_url, embeds)
+                    return await self.send_message(webhook_url, content, username, avatar_url, embeds, thread_id=thread_id)
                 return None
             except Exception:
                 return None

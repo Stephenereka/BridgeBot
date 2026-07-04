@@ -221,6 +221,30 @@ class SetupCog(commands.Cog, name="Setup"):
             'channel': channel.name,
         })
 
+    @app_commands.command(name="digest", description="Enable or disable weekly bridge summary for this server")
+    @app_commands.describe(
+        action="Turn weekly digest on or off",
+        channel="Channel to send digests to (required when turning on)"
+    )
+    @app_commands.choices(action=[
+        app_commands.Choice(name="on — enable weekly digest", value="on"),
+        app_commands.Choice(name="off — disable weekly digest", value="off"),
+    ])
+    @require_perm(PermLevel.ADMIN)
+    async def digest(self, interaction: discord.Interaction, action: str, channel: discord.TextChannel = None):
+        if action == "on" and not channel:
+            await interaction.response.send_message("❌ You must specify a channel when enabling the digest.", ephemeral=True)
+            return
+        await interaction.response.defer(ephemeral=True)
+        await self.bot.db.upsert_server(interaction.guild)
+        if action == "on":
+            await self.bot.db.update_server_config(interaction.guild_id, 'digest_enabled', 1)
+            await self.bot.db.update_server_config(interaction.guild_id, 'digest_channel_id', channel.id)
+            await interaction.followup.send(f"✅ Weekly digest enabled. Stats will be sent to {channel.mention} every week.", ephemeral=True)
+        else:
+            await self.bot.db.update_server_config(interaction.guild_id, 'digest_enabled', 0)
+            await interaction.followup.send("✅ Weekly digest disabled.", ephemeral=True)
+
     @app_commands.command(name="setprefix", description="Change BridgeBot's legacy text-command prefix for this server (bot owner only)")
     @app_commands.describe(prefix="New prefix, e.g. !bb or ? (default is \"!bb \")")
     async def setprefix(self, interaction: discord.Interaction, prefix: str):

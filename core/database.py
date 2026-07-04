@@ -142,6 +142,74 @@ class Database:
                 UNIQUE(server_id, blocked_server_id)
             );
 
+            CREATE TABLE IF NOT EXISTS thread_bridges (
+                id TEXT PRIMARY KEY,
+                bridge_id TEXT NOT NULL,
+                thread_a_id INTEGER NOT NULL,
+                thread_a_server_id INTEGER NOT NULL,
+                thread_b_id INTEGER NOT NULL,
+                thread_b_server_id INTEGER NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+
+            CREATE TABLE IF NOT EXISTS polls (
+                id TEXT PRIMARY KEY,
+                federation_id TEXT NOT NULL,
+                creator_server_id INTEGER NOT NULL,
+                creator_user_id INTEGER NOT NULL,
+                question TEXT NOT NULL,
+                options TEXT NOT NULL,
+                status TEXT DEFAULT 'active',
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                ends_at TIMESTAMP
+            );
+
+            CREATE TABLE IF NOT EXISTS poll_votes (
+                id TEXT PRIMARY KEY,
+                poll_id TEXT NOT NULL,
+                server_id INTEGER NOT NULL,
+                user_id INTEGER NOT NULL,
+                option_index INTEGER NOT NULL,
+                voted_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(poll_id, user_id)
+            );
+
+            CREATE TABLE IF NOT EXISTS poll_messages (
+                id TEXT PRIMARY KEY,
+                poll_id TEXT NOT NULL,
+                server_id INTEGER NOT NULL,
+                channel_id INTEGER NOT NULL,
+                message_id INTEGER NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS bridge_templates (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                creator_server_id INTEGER NOT NULL,
+                settings TEXT NOT NULL,
+                is_public INTEGER DEFAULT 0,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+
+            CREATE TABLE IF NOT EXISTS hub_channels (
+                federation_id TEXT PRIMARY KEY,
+                server_id INTEGER NOT NULL,
+                channel_id INTEGER NOT NULL,
+                set_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+
+            CREATE TABLE IF NOT EXISTS federation_broadcast_targets (
+                id TEXT PRIMARY KEY,
+                federation_id TEXT NOT NULL,
+                server_id INTEGER NOT NULL,
+                channel_id INTEGER NOT NULL,
+                UNIQUE(federation_id, server_id)
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_thread_bridges_a ON thread_bridges(thread_a_id);
+            CREATE INDEX IF NOT EXISTS idx_thread_bridges_b ON thread_bridges(thread_b_id);
+            CREATE INDEX IF NOT EXISTS idx_polls_fed ON polls(federation_id);
+            CREATE INDEX IF NOT EXISTS idx_poll_votes ON poll_votes(poll_id);
             CREATE INDEX IF NOT EXISTS idx_bridges_ch_a ON channel_bridges(channel_a_id);
             CREATE INDEX IF NOT EXISTS idx_bridges_ch_b ON channel_bridges(channel_b_id);
             CREATE INDEX IF NOT EXISTS idx_msgmap_original ON message_map(original_message_id);
@@ -163,6 +231,46 @@ class Database:
             await self._conn.commit()
         except Exception:
             pass
+        try:
+            await self._conn.execute("ALTER TABLE channel_bridges ADD COLUMN spam_paused INTEGER DEFAULT 0")
+            await self._conn.commit()
+        except Exception:
+            pass
+        try:
+            await self._conn.execute("ALTER TABLE channel_bridges ADD COLUMN ping_mode TEXT DEFAULT 'none'")
+            await self._conn.commit()
+        except Exception:
+            pass
+        try:
+            await self._conn.execute("ALTER TABLE channel_bridges ADD COLUMN link_mode TEXT DEFAULT 'all'")
+            await self._conn.commit()
+        except Exception:
+            pass
+        try:
+            await self._conn.execute("ALTER TABLE channel_bridges ADD COLUMN purpose TEXT")
+            await self._conn.commit()
+        except Exception:
+            pass
+        try:
+            await self._conn.execute("ALTER TABLE channel_bridges ADD COLUMN last_message_at TIMESTAMP")
+            await self._conn.commit()
+        except Exception:
+            pass
+        try:
+            await self._conn.execute("ALTER TABLE channel_bridges ADD COLUMN total_messages INTEGER DEFAULT 0")
+            await self._conn.commit()
+        except Exception:
+            pass
+        try:
+            await self._conn.execute("ALTER TABLE servers ADD COLUMN digest_enabled INTEGER DEFAULT 0")
+            await self._conn.commit()
+        except Exception:
+            pass
+        try:
+            await self._conn.execute("ALTER TABLE servers ADD COLUMN digest_channel_id INTEGER")
+            await self._conn.commit()
+        except Exception:
+            pass
 
     # ── Servers ────────────────────────────────────────────────────────────────
 
@@ -178,7 +286,7 @@ class Database:
             return await cur.fetchone()
 
     async def update_server_config(self, server_id, key, value):
-        allowed = {'admin_role_id', 'admin_channel_id', 'audit_channel_id', 'alert_channel_id', 'prefix'}
+        allowed = {'admin_role_id', 'admin_channel_id', 'audit_channel_id', 'alert_channel_id', 'prefix', 'digest_enabled', 'digest_channel_id'}
         if key not in allowed:
             raise ValueError(f"Invalid config key: {key}")
         await self._conn.execute(f"UPDATE servers SET {key} = ? WHERE id = ?", (value, server_id))
@@ -562,6 +670,230 @@ class Database:
             'role_mappings': [dict(m) for m in mappings],
             'blacklist': [dict(b) for b in bl],
         }
+
+    # ── Bridge Column Update ───────────────────────────────────────────────────
+
+    async def update_bridge_column(self, bridge_id, column, value):
+        ALLOWED = {'spam_paused', 'ping_mode', 'link_mode', 'purpose', 'paused', 'active',
+                   'relay_edits', 'relay_deletes', 'relay_attachments', 'relay_embeds', 'nsfw_allowed'}
+        if column not in ALLOWED:
+            raise ValueError(f"Disallowed column: {column}")
+        await self._conn.execute(f"UPDATE channel_bridges SET {column} = ? WHERE id = ?", (value, bridge_id))
+        await self._conn.commit()
+
+    async def increment_bridge_message_count(self, bridge_id):
+        await self._conn.execute(
+            "UPDATE channel_bridges SET total_messages = total_messages + 1, last_message_at = CURRENT_TIMESTAMP WHERE id = ?",
+            (bridge_id,)
+        )
+        await self._conn.commit()
+
+    # ── Thread Bridges ─────────────────────────────────────────────────────────
+
+    async def add_thread_bridge(self, tb_id, bridge_id, thread_a_id, thread_a_server_id, thread_b_id, thread_b_server_id):
+        await self._conn.execute("""
+            INSERT OR IGNORE INTO thread_bridges
+            (id, bridge_id, thread_a_id, thread_a_server_id, thread_b_id, thread_b_server_id)
+            VALUES (?, ?, ?, ?, ?, ?)
+        """, (tb_id, bridge_id, thread_a_id, thread_a_server_id, thread_b_id, thread_b_server_id))
+        await self._conn.commit()
+
+    async def get_thread_bridge_by_thread(self, thread_id):
+        async with self._conn.execute(
+            "SELECT * FROM thread_bridges WHERE thread_a_id = ? OR thread_b_id = ?",
+            (thread_id, thread_id)
+        ) as cur:
+            return await cur.fetchone()
+
+    async def delete_thread_bridges_for_bridge(self, bridge_id):
+        await self._conn.execute("DELETE FROM thread_bridges WHERE bridge_id = ?", (bridge_id,))
+        await self._conn.commit()
+
+    # ── Polls ──────────────────────────────────────────────────────────────────
+
+    async def create_poll(self, poll_id, federation_id, creator_server_id, creator_user_id, question, options_json, ends_at):
+        await self._conn.execute("""
+            INSERT INTO polls (id, federation_id, creator_server_id, creator_user_id, question, options, ends_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        """, (poll_id, federation_id, creator_server_id, creator_user_id, question, options_json, ends_at))
+        await self._conn.commit()
+
+    async def get_poll(self, poll_id):
+        async with self._conn.execute("SELECT * FROM polls WHERE id = ?", (poll_id,)) as cur:
+            return await cur.fetchone()
+
+    async def add_poll_vote(self, vote_id, poll_id, server_id, user_id, option_index):
+        try:
+            await self._conn.execute("""
+                INSERT INTO poll_votes (id, poll_id, server_id, user_id, option_index)
+                VALUES (?, ?, ?, ?, ?)
+            """, (vote_id, poll_id, server_id, user_id, option_index))
+            await self._conn.commit()
+            return True
+        except Exception:
+            return False
+
+    async def get_poll_votes(self, poll_id):
+        async with self._conn.execute("SELECT * FROM poll_votes WHERE poll_id = ?", (poll_id,)) as cur:
+            return await cur.fetchall()
+
+    async def close_poll(self, poll_id):
+        await self._conn.execute("UPDATE polls SET status = 'closed' WHERE id = ?", (poll_id,))
+        await self._conn.commit()
+
+    async def add_poll_message(self, msg_id, poll_id, server_id, channel_id, message_id):
+        await self._conn.execute("""
+            INSERT OR IGNORE INTO poll_messages (id, poll_id, server_id, channel_id, message_id)
+            VALUES (?, ?, ?, ?, ?)
+        """, (msg_id, poll_id, server_id, channel_id, message_id))
+        await self._conn.commit()
+
+    async def get_poll_messages(self, poll_id):
+        async with self._conn.execute("SELECT * FROM poll_messages WHERE poll_id = ?", (poll_id,)) as cur:
+            return await cur.fetchall()
+
+    async def get_active_polls_for_federation(self, federation_id):
+        async with self._conn.execute(
+            "SELECT * FROM polls WHERE federation_id = ? AND status = 'active' ORDER BY created_at DESC",
+            (federation_id,)
+        ) as cur:
+            return await cur.fetchall()
+
+    # ── Templates ──────────────────────────────────────────────────────────────
+
+    async def save_template(self, tmpl_id, name, creator_server_id, settings_json):
+        await self._conn.execute("""
+            INSERT INTO bridge_templates (id, name, creator_server_id, settings) VALUES (?, ?, ?, ?)
+        """, (tmpl_id, name, creator_server_id, settings_json))
+        await self._conn.commit()
+
+    async def get_template(self, tmpl_id):
+        async with self._conn.execute("SELECT * FROM bridge_templates WHERE id = ?", (tmpl_id,)) as cur:
+            return await cur.fetchone()
+
+    async def get_public_templates(self):
+        async with self._conn.execute(
+            "SELECT * FROM bridge_templates WHERE is_public = 1 ORDER BY created_at DESC LIMIT 20"
+        ) as cur:
+            return await cur.fetchall()
+
+    async def get_server_templates(self, server_id):
+        async with self._conn.execute(
+            "SELECT * FROM bridge_templates WHERE creator_server_id = ? ORDER BY created_at DESC",
+            (server_id,)
+        ) as cur:
+            return await cur.fetchall()
+
+    async def make_template_public(self, tmpl_id, server_id):
+        async with self._conn.execute(
+            "SELECT id FROM bridge_templates WHERE id = ? AND creator_server_id = ?", (tmpl_id, server_id)
+        ) as cur:
+            if not await cur.fetchone():
+                return False
+        await self._conn.execute("UPDATE bridge_templates SET is_public = 1 WHERE id = ?", (tmpl_id,))
+        await self._conn.commit()
+        return True
+
+    async def delete_template(self, tmpl_id, server_id):
+        await self._conn.execute(
+            "DELETE FROM bridge_templates WHERE id = ? AND creator_server_id = ?", (tmpl_id, server_id)
+        )
+        await self._conn.commit()
+
+    # ── Hub / Broadcasting ─────────────────────────────────────────────────────
+
+    async def set_hub_channel(self, federation_id, server_id, channel_id):
+        await self._conn.execute("""
+            INSERT INTO hub_channels (federation_id, server_id, channel_id)
+            VALUES (?, ?, ?)
+            ON CONFLICT(federation_id) DO UPDATE SET server_id=excluded.server_id, channel_id=excluded.channel_id, set_at=CURRENT_TIMESTAMP
+        """, (federation_id, server_id, channel_id))
+        await self._conn.commit()
+
+    async def get_hub_channel(self, federation_id):
+        async with self._conn.execute("SELECT * FROM hub_channels WHERE federation_id = ?", (federation_id,)) as cur:
+            return await cur.fetchone()
+
+    async def set_broadcast_target(self, target_id, federation_id, server_id, channel_id):
+        await self._conn.execute("""
+            INSERT INTO federation_broadcast_targets (id, federation_id, server_id, channel_id)
+            VALUES (?, ?, ?, ?)
+            ON CONFLICT(federation_id, server_id) DO UPDATE SET channel_id=excluded.channel_id
+        """, (target_id, federation_id, server_id, channel_id))
+        await self._conn.commit()
+
+    async def get_broadcast_targets(self, federation_id):
+        async with self._conn.execute(
+            "SELECT * FROM federation_broadcast_targets WHERE federation_id = ?", (federation_id,)
+        ) as cur:
+            return await cur.fetchall()
+
+    async def remove_broadcast_target(self, federation_id, server_id):
+        await self._conn.execute(
+            "DELETE FROM federation_broadcast_targets WHERE federation_id = ? AND server_id = ?",
+            (federation_id, server_id)
+        )
+        await self._conn.commit()
+
+    # ── Maintenance ────────────────────────────────────────────────────────────
+
+    async def purge_old_message_map(self, days=30):
+        await self._conn.execute(
+            "DELETE FROM message_map WHERE relayed_at < datetime('now', ?)", (f'-{days} days',)
+        )
+        await self._conn.commit()
+
+    async def get_inactive_bridges(self):
+        async with self._conn.execute("""
+            SELECT *,
+                CAST(julianday('now') - julianday(COALESCE(last_message_at, created_at)) AS INTEGER) as days_inactive
+            FROM channel_bridges
+            WHERE active = 1
+              AND spam_paused = 0
+              AND CAST(julianday('now') - julianday(COALESCE(last_message_at, created_at)) AS INTEGER) >= 7
+            ORDER BY days_inactive DESC
+        """) as cur:
+            return await cur.fetchall()
+
+    async def get_anniversary_bridges(self):
+        async with self._conn.execute("""
+            SELECT * FROM channel_bridges
+            WHERE active = 1
+              AND DATE(created_at) = DATE('now', '-30 days')
+        """) as cur:
+            return await cur.fetchall()
+
+    async def get_server_weekly_stats(self, server_id):
+        stats = {}
+        async with self._conn.execute("""
+            SELECT COUNT(*) as cnt FROM message_map mm
+            JOIN channel_bridges cb ON mm.bridge_id = cb.id
+            WHERE (cb.channel_a_server_id = ? OR cb.channel_b_server_id = ?)
+              AND mm.relayed_at > datetime('now', '-7 days')
+        """, (server_id, server_id)) as cur:
+            row = await cur.fetchone()
+            stats['total_messages'] = row['cnt'] if row else 0
+
+        async with self._conn.execute("""
+            SELECT COUNT(*) as cnt FROM channel_bridges
+            WHERE (channel_a_server_id = ? OR channel_b_server_id = ?) AND active = 1
+        """, (server_id, server_id)) as cur:
+            row = await cur.fetchone()
+            stats['active_bridges'] = row['cnt'] if row else 0
+
+        async with self._conn.execute("""
+            SELECT cb.channel_a_id as channel_id, cb.id as bridge_id, COUNT(*) as messages
+            FROM message_map mm
+            JOIN channel_bridges cb ON mm.bridge_id = cb.id
+            WHERE (cb.channel_a_server_id = ? OR cb.channel_b_server_id = ?)
+              AND mm.relayed_at > datetime('now', '-7 days')
+            GROUP BY cb.id
+            ORDER BY messages DESC
+            LIMIT 3
+        """, (server_id, server_id)) as cur:
+            stats['top_bridges'] = [dict(r) for r in await cur.fetchall()]
+
+        return stats
 
     async def close(self):
         if self._conn:

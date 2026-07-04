@@ -48,6 +48,9 @@ class BridgeBot(commands.Bot):
             'cogs.setup_cog',
             'cogs.moderation',
             'cogs.leaderboard',
+            'cogs.polls',
+            'cogs.hub',
+            'cogs.templates',
         ]
         for cog in cogs:
             await self.load_extension(cog)
@@ -57,6 +60,10 @@ class BridgeBot(commands.Bot):
         print(f'  Synced {len(synced)} slash commands')
 
         self.webhook_health_check.start()
+        self.purge_old_data.start()
+        self.inactive_bridge_check.start()
+        self.anniversary_check.start()
+        self.weekly_digest.start()
 
     async def on_ready(self):
         print(f'\n🌉 BridgeBot online as {self.user} (ID: {self.user.id})')
@@ -146,6 +153,149 @@ class BridgeBot(commands.Bot):
     async def before_health_check(self):
         await self.wait_until_ready()
 
+    @tasks.loop(hours=24)
+    async def purge_old_data(self):
+        try:
+            await self.db.purge_old_message_map(days=30)
+        except Exception as e:
+            print(f'Purge error: {e}')
+
+    @purge_old_data.before_loop
+    async def before_purge(self):
+        await self.wait_until_ready()
+
+    @tasks.loop(hours=24)
+    async def inactive_bridge_check(self):
+        try:
+            inactive = await self.db.get_inactive_bridges()
+            for bridge in inactive:
+                days = bridge['days_inactive']
+                ch_a = self.get_channel(bridge['channel_a_id'])
+                ch_b = self.get_channel(bridge['channel_b_id'])
+                guild_a = self.get_guild(bridge['channel_a_server_id'])
+                guild_b = self.get_guild(bridge['channel_b_server_id'])
+
+                if days >= 37:
+                    for ch in [ch_a, ch_b]:
+                        if ch:
+                            try:
+                                await ch.send(embed=discord.Embed(
+                                    title="🗑️ Bridge Removed",
+                                    description="This bridge has been inactive for 37 days and was automatically removed.",
+                                    color=0xED4245,
+                                ))
+                            except Exception:
+                                pass
+                    await self.db.delete_bridge(bridge['id'])
+                elif days >= 30:
+                    for ch in [ch_a, ch_b]:
+                        if ch:
+                            try:
+                                await ch.send(embed=discord.Embed(
+                                    title="⚠️ Bridge Expiring in 7 Days",
+                                    description="This bridge has been inactive for 30 days and will be permanently deleted in 7 days unless a message is sent.",
+                                    color=0xED4245,
+                                ))
+                            except Exception:
+                                pass
+                elif days >= 14:
+                    if not bridge['paused']:
+                        await self.db.update_bridge_column(bridge['id'], 'paused', 1)
+                        self.relay.invalidate_bridge_cache()
+                        for ch in [ch_a, ch_b]:
+                            if ch:
+                                try:
+                                    await ch.send(embed=discord.Embed(
+                                        title="⏸️ Bridge Auto-Paused",
+                                        description="This bridge was inactive for 14 days and has been automatically paused. An admin can resume it with `/bridge resume`.",
+                                        color=0xFEE75C,
+                                    ))
+                                except Exception:
+                                    pass
+                elif days >= 7:
+                    for ch in [ch_a, ch_b]:
+                        if ch:
+                            try:
+                                await ch.send(embed=discord.Embed(
+                                    title="💤 Quiet Bridge",
+                                    description="This bridge has been inactive for 7 days. It will be auto-paused in 7 more days if no messages are sent.",
+                                    color=0x5865F2,
+                                ))
+                            except Exception:
+                                pass
+        except Exception as e:
+            print(f'Inactive bridge check error: {e}')
+
+    @inactive_bridge_check.before_loop
+    async def before_inactive_check(self):
+        await self.wait_until_ready()
+
+    @tasks.loop(hours=24)
+    async def anniversary_check(self):
+        try:
+            bridges = await self.db.get_anniversary_bridges()
+            for bridge in bridges:
+                guild_a = self.get_guild(bridge['channel_a_server_id'])
+                guild_b = self.get_guild(bridge['channel_b_server_id'])
+                ch_a = self.get_channel(bridge['channel_a_id'])
+                ch_b = self.get_channel(bridge['channel_b_id'])
+                msg_count = bridge['total_messages'] or 0
+                a_name = guild_a.name if guild_a else 'a server'
+                b_name = guild_b.name if guild_b else 'a server'
+                embed = discord.Embed(
+                    title="🌉 Bridge Anniversary!",
+                    description=(
+                        f"🎉 **One month of bridging between {a_name} and {b_name}!**\n"
+                        f"{msg_count:,} messages have been shared across this bridge. Keep it up!"
+                    ),
+                    color=0x57F287,
+                )
+                for ch in [ch_a, ch_b]:
+                    if ch:
+                        try:
+                            await ch.send(embed=embed)
+                        except Exception:
+                            pass
+        except Exception as e:
+            print(f'Anniversary check error: {e}')
+
+    @anniversary_check.before_loop
+    async def before_anniversary(self):
+        await self.wait_until_ready()
+
+    @tasks.loop(hours=168)
+    async def weekly_digest(self):
+        try:
+            for guild in self.guilds:
+                server = await self.db.get_server(guild.id)
+                if not server or not server['digest_enabled'] or not server['digest_channel_id']:
+                    continue
+                stats = await self.db.get_server_weekly_stats(guild.id)
+                if not stats or stats.get('total_messages', 0) == 0:
+                    continue
+                ch = self.get_channel(server['digest_channel_id'])
+                if not ch:
+                    continue
+                embed = discord.Embed(title="📊 Weekly Bridge Digest", color=0x5865F2)
+                embed.add_field(name="Messages Relayed", value=f"{stats['total_messages']:,}", inline=True)
+                embed.add_field(name="Active Bridges", value=str(stats['active_bridges']), inline=True)
+                if stats.get('top_bridges'):
+                    lines = []
+                    for i, b in enumerate(stats['top_bridges'][:3]):
+                        lines.append(f"**{i+1}.** <#{b['channel_id']}> — {b['messages']:,} msgs")
+                    embed.add_field(name="Top Bridges This Week", value='\n'.join(lines), inline=False)
+                embed.set_footer(text="Use /digest off to disable.")
+                try:
+                    await ch.send(embed=embed)
+                except Exception:
+                    pass
+        except Exception as e:
+            print(f'Weekly digest error: {e}')
+
+    @weekly_digest.before_loop
+    async def before_weekly_digest(self):
+        await self.wait_until_ready()
+
     async def on_guild_join(self, guild: discord.Guild):
         await self.db.upsert_server(guild)
         ch = guild.system_channel
@@ -171,10 +321,49 @@ class BridgeBot(commands.Bot):
         await self.db.mark_server_kicked(guild.id)
         print(f'  Left server: {guild.name} ({guild.id})')
 
+    async def on_thread_create(self, thread: discord.Thread):
+        if not thread.parent_id:
+            return
+        try:
+            bridges = await self.relay._get_bridges_cached(thread.parent_id)
+            for bridge in bridges:
+                if not bridge['active'] or bridge['paused']:
+                    continue
+                is_side_a = bridge['channel_a_id'] == thread.parent_id
+                other_ch_id = bridge['channel_b_id'] if is_side_a else bridge['channel_a_id']
+                other_ch = self.get_channel(other_ch_id)
+                if not other_ch:
+                    continue
+                try:
+                    other_thread = await other_ch.create_thread(
+                        name=thread.name,
+                        type=thread.type if thread.type != discord.ChannelType.news_thread else discord.ChannelType.public_thread,
+                        reason="BridgeBot thread mirror",
+                    )
+                    await self.db.add_thread_bridge(
+                        str(__import__('uuid').uuid4()),
+                        bridge['id'],
+                        thread.id,
+                        thread.guild.id,
+                        other_thread.id,
+                        other_ch.guild.id,
+                    )
+                    await other_thread.send(embed=discord.Embed(
+                        description=f"🔗 This thread is bridged from **{thread.guild.name}**",
+                        color=0x5865F2,
+                    ))
+                except Exception as e:
+                    print(f'Thread bridge create error: {e}')
+        except Exception as e:
+            print(f'on_thread_create error: {e}')
+
     async def on_message(self, message: discord.Message):
         if message.author.bot or message.webhook_id:
             return
-        await self.relay.relay_message(message)
+        if isinstance(message.channel, discord.Thread):
+            await self.relay.relay_thread_message(message)
+        else:
+            await self.relay.relay_message(message)
         await self.process_commands(message)
 
     async def on_message_edit(self, before: discord.Message, after: discord.Message):
